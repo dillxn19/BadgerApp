@@ -4,9 +4,11 @@ BadgerApp based on BruinDining(Nom) on AppStore
 add portions eaten to determine macros, include map and location of dining hall at the bottom, 
 webscrape all items and ingredients, mongodb instead of csv?, maybe show whether its crowded or not by user
 input?, notifications if a specific food item appears in the dining hall
+link for dining hall: https://wisc-housingdining.nutrislice.com/
 
 2. Another page, events page/clubs can post their events and meetings, filter for only "followed" clubs or all clubs, 
 subtab for club discovery page where u can find more info about the club based on preferences listed, vectorize 
 club descriptions and ex. "I like basketball and coding" -> give more basketball and cs based clubs
+link for clubs: https://win.wisc.edu/organizations
 
 3. MOREEEE, this needs to be the app every mf in this school has downloaded!
