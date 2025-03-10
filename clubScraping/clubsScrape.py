@@ -26,18 +26,27 @@ driver.get(url)
 # Minimal wait for initial load
 time.sleep(1)
 
-# Function to extract organization names and links
-def extract_names_and_links(html_content):
+# Function to extract organization names, links and image sources
+def extract_names_links_and_images(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     organizations = soup.find('ul', class_='MuiList-root MuiList-padding').find_all('a')
     names = []
     links = []
+    image_sources = []
+    
     for org in organizations:
         name = org.find('div', style=lambda x: x and 'font-size: 1.125rem;' in x).text.strip()
         link = org.get('href')
+        
+        # Extract image source
+        img_tag = org.find('img')
+        image_src = img_tag.get('src') if img_tag else 'No image available'
+        
         names.append(name)
         links.append(link)
-    return names, links
+        image_sources.append(image_src)
+        
+    return names, links, image_sources
 
 # Function to extract description, email, website, and Instagram from the organization's page
 def extract_details(driver):
@@ -130,15 +139,15 @@ while True:
         print("No more 'Load More' button or error:", e)
         break  # Stop when no more "Load More" button is available or an error occurs
 
-# Extract names and links after all organizations have loaded
+# Extract names, links, and image sources after all organizations have loaded
 html_content = driver.page_source
-names, links = extract_names_and_links(html_content)
+names, links, image_sources = extract_names_links_and_images(html_content)
 
 # List to store the extracted data
 data = []
 
 # Loop through the links to extract details
-for i, (name, link) in enumerate(zip(names, links)):
+for i, (name, link, image_src) in enumerate(zip(names, links, image_sources)):
     if i % 10 == 0:  # Only print progress every 10 organizations to reduce console output
         print(f"Processing {i+1}/{len(names)}: {name}")
     try:
@@ -149,7 +158,8 @@ for i, (name, link) in enumerate(zip(names, links)):
             'Description': description, 
             'Email': email, 
             'Website': website, 
-            'Instagram': instagram
+            'Instagram': instagram,
+            'Image_Source': image_src
         })
         # No delay between organizations
     except Exception as e:
@@ -159,7 +169,8 @@ for i, (name, link) in enumerate(zip(names, links)):
             'Description': 'Error fetching data', 
             'Email': 'Error', 
             'Website': 'Error', 
-            'Instagram': 'Error'
+            'Instagram': 'Error',
+            'Image_Source': image_src  # Still include the image source even if other details fail
         })
         # Try to go back or restart from main page without delay
         try:
@@ -167,9 +178,8 @@ for i, (name, link) in enumerate(zip(names, links)):
         except:
             pass
 
-# Save names, descriptions, emails, websites, and Instagram handles to CSV with proper quoting
+# Save data to CSV with proper quoting
 df = pd.DataFrame(data)
-# Use the standard csv QUOTE_ALL constant instead of pandas.io.common.csv
 df.to_csv('organization_data.csv', index=False, quoting=csv.QUOTE_ALL)
 print(f"Data saved to organization_data.csv. Total organizations processed: {len(data)}")
 
