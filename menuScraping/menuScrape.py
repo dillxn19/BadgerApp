@@ -8,11 +8,13 @@ from selenium.webdriver.support import expected_conditions as EC
 import pandas as pd
 import time
 import csv
+from datetime import datetime
+from bs4 import BeautifulSoup
+import re
 
-# Set up ChromeDriver with optimized options
+# Set up ChromeDriver with visible browser options
 options = webdriver.ChromeOptions()
-options.add_argument('--headless')  # Run in headless mode
-options.add_argument('--disable-gpu')
+options.add_argument('--start-maximized')  # Maximize browser window
 options.add_argument('--disable-extensions')
 options.add_experimental_option("prefs", {
     "profile.default_content_setting_values.geolocation": 1  # 1 = allow
@@ -165,27 +167,124 @@ def get_dining_locations():
         print(f"Error in get_dining_locations: {e}")
         raise  # Re-raise the exception to be handled in the main block
 
+def extract_breakfast_items(html_content, location_name):
+    """
+    Extract breakfast menu items from the HTML content.
+    
+    Returns:
+    list of dict: List of breakfast items with details
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    items = []
+    
+    # Find all menu items
+    menu_items = soup.find_all('ns-menu-item-food')
+    
+    for item in menu_items:
+        # Extract food name
+        name_elem = item.find('span', class_='food-name')
+        name = name_elem.get_text(strip=True) if name_elem else "Unknown"
+        
+        # Extract calories
+        calories_elem = item.find('li', class_='food-calories')
+        calories = calories_elem.get_text(strip=True).split()[0] if calories_elem else "N/A"
+        
+        # Extract dietary icons/traits
+        traits = []
+        trait_elems = item.find_all('div', class_='custom-icon')
+        for trait in trait_elems:
+            # Extract trait name from background image URL
+            style = trait.get('style', '')
+            trait_match = re.search(r'Food_Trait_Icons_([^-]+)', style)
+            if trait_match:
+                traits.append(trait_match.group(1))
+        
+        # Create item dictionary
+        item_dict = {
+            'location_name': location_name,
+            'item_name': name,
+            'calories': calories,
+            'dietary_traits': ', '.join(traits)
+        }
+        
+        items.append(item_dict)
+    
+    return items
+
+def get_breakfast_menu_for_locations(locations):
+    """
+    Get breakfast menu items for each location.
+    
+    Returns:
+    dict: Location name mapped to list of breakfast items
+    """
+    # Get current date in YYYY-MM-DD format
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    
+    location_menus = {}
+    
+    for location in locations:
+        try:
+            # Generate breakfast link for current date
+            breakfast_link = f"{location['link']}/breakfast/{current_date}"
+            
+            # Navigate to the breakfast menu page
+            driver.get(breakfast_link)
+            time.sleep(3)  # Wait for page to load
+            
+            # Get the page source
+            page_source = driver.page_source
+            
+            # Extract breakfast items
+            breakfast_items = extract_breakfast_items(page_source, location['name'])
+            
+            # Store breakfast items
+            location_menus[location['name']] = breakfast_items
+            
+            print(f"Added {len(breakfast_items)} breakfast items for {location['name']}")
+        
+        except Exception as e:
+            print(f"Error getting breakfast menu for {location['name']}: {e}")
+    
+    return location_menus
+
 # Main function
 if __name__ == "__main__":
     try:
         # Get the directory of the current script
         script_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # Set the CSV file path to be in the same directory as the script
-        csv_path = os.path.join(script_dir, "dining_hall_locations.csv")
+        # Set the CSV file paths
+        locations_csv_path = os.path.join(script_dir, "dining_hall_locations.csv")
         
+        # First, get and save dining locations
         dining_locations = get_dining_locations()
         
         if dining_locations:
             print(f"\nFound {len(dining_locations)} dining locations:")
-            for i, location in enumerate(dining_locations, 1):
-                print(f"{i}. {location['name']} - {location['address']}")
-                print(f"   Operating: {location['dates_of_operation']}")
-                print(f"   Hours: Breakfast: {location['breakfast_hours']}, Lunch: {location['lunch_hours']}, Dinner: {location['dinner_hours']}")
             
+            # Save dining hall locations
             df = pd.DataFrame(dining_locations)
-            df.to_csv(csv_path, index=False, quoting=csv.QUOTE_ALL)
-            print(f"Data saved to {csv_path}")
+            df.to_csv(locations_csv_path, index=False, quoting=csv.QUOTE_ALL)
+            print(f"Dining hall locations saved to {locations_csv_path}")
+            
+            # Then get breakfast menus
+            breakfast_menus = get_breakfast_menu_for_locations(dining_locations)
+            
+            # Save breakfast items for each location in separate CSVs
+            for location_name, items in breakfast_menus.items():
+                # Create a safe filename by replacing spaces and special characters
+                safe_filename = ''.join(c if c.isalnum() or c in (' ', '_') else '_' for c in location_name)
+                safe_filename = safe_filename.replace(' ', '_').lower()
+                
+                # Create CSV path for this location's breakfast items
+                items_csv_path = os.path.join(script_dir, f"dining_hall_breakfast_items_{safe_filename}.csv")
+                
+                # Save to CSV
+                items_df = pd.DataFrame(items)
+                items_df.to_csv(items_csv_path, index=False, quoting=csv.QUOTE_ALL)
+                print(f"Breakfast items for {location_name} saved to {items_csv_path}")
         else:
             print("No dining locations found!")
     
