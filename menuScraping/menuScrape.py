@@ -1,3 +1,4 @@
+import os
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -40,18 +41,21 @@ def get_dining_locations():
         for selector in view_menus_selectors:
             try:
                 if selector.startswith("//"):
-                    button = WebDriverWait(driver, 5).until(
+                    button = WebDriverWait(driver, 10).until(
                         EC.element_to_be_clickable((By.XPATH, selector))
                     )
                 else:
-                    button = WebDriverWait(driver, 5).until(
+                    button = WebDriverWait(driver, 10).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                     )
                 button.click()
                 print(f"Clicked 'View Menus' using selector: {selector}")
                 break
-            except:
+            except Exception as click_error:
+                print(f"Failed to click with selector {selector}: {click_error}")
                 continue
+        else:
+            raise Exception("Could not find 'View Menus' button")
                 
         # Handle "Let's do it" button if it appears
         try:
@@ -152,36 +156,24 @@ def get_dining_locations():
             except Exception as e:
                 print(f"Error processing a location element: {e}")
         
+        if not locations:
+            raise Exception("No locations found")
+        
         return locations
     
     except Exception as e:
         print(f"Error in get_dining_locations: {e}")
-        
-        # Fallback to hardcoded locations if scraping fails
-        return [
-            {
-                "name": "Gordon Avenue Market",
-                "link": "https://wisc-housingdining.nutrislice.com/menu/gordon-avenue-market",
-                "address": "770 W. Dayton St., Madison, WI 53706",
-                "dates_of_operation": "Jan 12 - May 9",
-                "breakfast_hours": "7AM - 11AM",
-                "lunch_hours": "11AM - 2PM",
-                "dinner_hours": "4PM - 8PM"
-            },
-            {
-                "name": "Four Lakes Market",
-                "link": "https://wisc-housingdining.nutrislice.com/menu/four-lakes-market",
-                "address": "640 Elm Dr, Madison, WI, USA",
-                "dates_of_operation": "Jan 12 - May 9",
-                "breakfast_hours": "9AM - 11AM",
-                "lunch_hours": "11AM - 2PM",
-                "dinner_hours": "4PM - 8PM"
-            }
-        ]
+        raise  # Re-raise the exception to be handled in the main block
 
 # Main function
 if __name__ == "__main__":
     try:
+        # Get the directory of the current script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Set the CSV file path to be in the same directory as the script
+        csv_path = os.path.join(script_dir, "dining_hall_locations.csv")
+        
         dining_locations = get_dining_locations()
         
         if dining_locations:
@@ -192,8 +184,8 @@ if __name__ == "__main__":
                 print(f"   Hours: Breakfast: {location['breakfast_hours']}, Lunch: {location['lunch_hours']}, Dinner: {location['dinner_hours']}")
             
             df = pd.DataFrame(dining_locations)
-            df.to_csv("dining_hall_locations.csv", index=False, quoting=csv.QUOTE_ALL)
-            print("Data saved to dining_hall_locations.csv")
+            df.to_csv(csv_path, index=False, quoting=csv.QUOTE_ALL)
+            print(f"Data saved to {csv_path}")
         else:
             print("No dining locations found!")
     
