@@ -167,12 +167,17 @@ def get_dining_locations():
         print(f"Error in get_dining_locations: {e}")
         raise  # Re-raise the exception to be handled in the main block
 
-def extract_breakfast_items(html_content, location_name):
+def extract_menu_items(html_content, location_name, meal_type):
     """
-    Extract breakfast menu items from the HTML content.
+    Extract menu items from the HTML content for a specific meal type.
+    
+    Args:
+    html_content (str): HTML page source
+    location_name (str): Name of the dining location
+    meal_type (str): Type of meal (breakfast/lunch/dinner)
     
     Returns:
-    list of dict: List of breakfast items with details
+    list of dict: List of menu items with details
     """
     soup = BeautifulSoup(html_content, 'html.parser')
     
@@ -188,7 +193,7 @@ def extract_breakfast_items(html_content, location_name):
         
         # Extract calories
         calories_elem = item.find('li', class_='food-calories')
-        calories = calories_elem.get_text(strip=True).split()[0] if calories_elem else "N/A"
+        calories = clean_calories(calories_elem.get_text(strip=True)) if calories_elem else "N/A"
         
         # Extract dietary icons/traits
         traits = []
@@ -205,49 +210,64 @@ def extract_breakfast_items(html_content, location_name):
             'location_name': location_name,
             'item_name': name,
             'calories': calories,
-            'dietary_traits': ', '.join(traits)
+            'dietary_traits': ', '.join(traits) if traits else ''
         }
         
         items.append(item_dict)
     
     return items
 
-def get_breakfast_menu_for_locations(locations):
+def clean_calories(cal_string):
     """
-    Get breakfast menu items for each location.
+    Clean calories string to extract only the numeric value
+    Returns 'N/A' if no numeric value found
+    """
+    if pd.isna(cal_string):
+        return 'N/A'
+    
+    # Remove 'Cal' or 'cal' and extract numeric value
+    match = re.search(r'(\d+)', str(cal_string))
+    return match.group(1) if match else 'N/A'
+
+def get_menu_for_locations(locations, meal_type):
+    """
+    Get menu items for each location for a specific meal type.
+    
+    Args:
+    locations (list): List of dining locations
+    meal_type (str): Type of meal (breakfast/lunch/dinner)
     
     Returns:
-    list: List of all breakfast items across locations
+    list: List of all menu items across locations
     """
-    # Get current date in YYYY-MM-DD format
     current_date = datetime.now().strftime('%Y-%m-%d')
     
-    all_breakfast_items = []
+    all_menu_items = []
     
     for location in locations:
         try:
-            # Generate breakfast link for current date
-            breakfast_link = f"{location['link']}/breakfast/{current_date}"
+            # Generate menu link for current date and meal type
+            menu_link = f"{location['link']}/{meal_type}/{current_date}"
             
-            # Navigate to the breakfast menu page
-            driver.get(breakfast_link)
+            # Navigate to the menu page
+            driver.get(menu_link)
             time.sleep(5)  # Wait for page to load
             
             # Get the page source
             page_source = driver.page_source
             
-            # Extract breakfast items
-            breakfast_items = extract_breakfast_items(page_source, location['name'])
+            # Extract menu items
+            menu_items = extract_menu_items(page_source, location['name'], meal_type)
             
-            # Add to all breakfast items
-            all_breakfast_items.extend(breakfast_items)
+            # Add to all menu items
+            all_menu_items.extend(menu_items)
             
-            print(f"Added {len(breakfast_items)} breakfast items for {location['name']}")
+            print(f"Added {len(menu_items)} {meal_type} items for {location['name']}")
         
         except Exception as e:
-            print(f"Error getting breakfast menu for {location['name']}: {e}")
+            print(f"Error getting {meal_type} menu for {location['name']}: {e}")
     
-    return all_breakfast_items
+    return all_menu_items
 
 # Main function
 if __name__ == "__main__":
@@ -258,6 +278,8 @@ if __name__ == "__main__":
         # Set the CSV file paths
         locations_csv_path = os.path.join(script_dir, "dining_hall_locations.csv")
         breakfast_items_csv_path = os.path.join(script_dir, "dining_hall_breakfast_items.csv")
+        lunch_items_csv_path = os.path.join(script_dir, "dining_hall_lunch_items.csv")
+        dinner_items_csv_path = os.path.join(script_dir, "dining_hall_dinner_items.csv")
         
         # First, get and save dining locations
         dining_locations = get_dining_locations()
@@ -270,13 +292,23 @@ if __name__ == "__main__":
             df.to_csv(locations_csv_path, index=False, quoting=csv.QUOTE_ALL)
             print(f"Dining hall locations saved to {locations_csv_path}")
             
-            # Then get breakfast menus
-            all_breakfast_items = get_breakfast_menu_for_locations(dining_locations)
+            # Get and save breakfast items
+            breakfast_items = get_menu_for_locations(dining_locations, 'breakfast')
+            breakfast_df = pd.DataFrame(breakfast_items)
+            breakfast_df.to_csv(breakfast_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
+            print(f"Breakfast items saved to {breakfast_items_csv_path}")
             
-            # Save all breakfast items to a single CSV
-            items_df = pd.DataFrame(all_breakfast_items)
-            items_df.to_csv(breakfast_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
-            print(f"All breakfast items saved to {breakfast_items_csv_path}")
+            # Get and save lunch items
+            lunch_items = get_menu_for_locations(dining_locations, 'lunch')
+            lunch_df = pd.DataFrame(lunch_items)
+            lunch_df.to_csv(lunch_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
+            print(f"Lunch items saved to {lunch_items_csv_path}")
+            
+            # Get and save dinner items
+            dinner_items = get_menu_for_locations(dining_locations, 'dinner')
+            dinner_df = pd.DataFrame(dinner_items)
+            dinner_df.to_csv(dinner_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
+            print(f"Dinner items saved to {dinner_items_csv_path}")
         else:
             print("No dining locations found!")
     
