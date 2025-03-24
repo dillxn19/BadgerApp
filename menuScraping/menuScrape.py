@@ -217,12 +217,12 @@ def get_breakfast_menu_for_locations(locations):
     Get breakfast menu items for each location.
     
     Returns:
-    dict: Location name mapped to list of breakfast items
+    list: List of all breakfast items across locations
     """
     # Get current date in YYYY-MM-DD format
     current_date = datetime.now().strftime('%Y-%m-%d')
     
-    location_menus = {}
+    all_breakfast_items = []
     
     for location in locations:
         try:
@@ -231,7 +231,7 @@ def get_breakfast_menu_for_locations(locations):
             
             # Navigate to the breakfast menu page
             driver.get(breakfast_link)
-            time.sleep(3)  # Wait for page to load
+            time.sleep(5)  # Wait for page to load
             
             # Get the page source
             page_source = driver.page_source
@@ -239,15 +239,15 @@ def get_breakfast_menu_for_locations(locations):
             # Extract breakfast items
             breakfast_items = extract_breakfast_items(page_source, location['name'])
             
-            # Store breakfast items
-            location_menus[location['name']] = breakfast_items
+            # Add to all breakfast items
+            all_breakfast_items.extend(breakfast_items)
             
             print(f"Added {len(breakfast_items)} breakfast items for {location['name']}")
         
         except Exception as e:
             print(f"Error getting breakfast menu for {location['name']}: {e}")
     
-    return location_menus
+    return all_breakfast_items
 
 # Main function
 if __name__ == "__main__":
@@ -257,6 +257,7 @@ if __name__ == "__main__":
         
         # Set the CSV file paths
         locations_csv_path = os.path.join(script_dir, "dining_hall_locations.csv")
+        breakfast_items_csv_path = os.path.join(script_dir, "dining_hall_breakfast_items.csv")
         
         # First, get and save dining locations
         dining_locations = get_dining_locations()
@@ -270,21 +271,12 @@ if __name__ == "__main__":
             print(f"Dining hall locations saved to {locations_csv_path}")
             
             # Then get breakfast menus
-            breakfast_menus = get_breakfast_menu_for_locations(dining_locations)
+            all_breakfast_items = get_breakfast_menu_for_locations(dining_locations)
             
-            # Save breakfast items for each location in separate CSVs
-            for location_name, items in breakfast_menus.items():
-                # Create a safe filename by replacing spaces and special characters
-                safe_filename = ''.join(c if c.isalnum() or c in (' ', '_') else '_' for c in location_name)
-                safe_filename = safe_filename.replace(' ', '_').lower()
-                
-                # Create CSV path for this location's breakfast items
-                items_csv_path = os.path.join(script_dir, f"dining_hall_breakfast_items_{safe_filename}.csv")
-                
-                # Save to CSV
-                items_df = pd.DataFrame(items)
-                items_df.to_csv(items_csv_path, index=False, quoting=csv.QUOTE_ALL)
-                print(f"Breakfast items for {location_name} saved to {items_csv_path}")
+            # Save all breakfast items to a single CSV
+            items_df = pd.DataFrame(all_breakfast_items)
+            items_df.to_csv(breakfast_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
+            print(f"All breakfast items saved to {breakfast_items_csv_path}")
         else:
             print("No dining locations found!")
     
