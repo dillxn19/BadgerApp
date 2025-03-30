@@ -167,67 +167,199 @@ def get_dining_locations():
         print(f"Error in get_dining_locations: {e}")
         raise  # Re-raise the exception to be handled in the main block
 
-def extract_menu_items(html_content, location_name, meal_type):
+def extract_nutrition_facts(driver, item_element):
     """
-    Extract menu items from the HTML content for a specific meal type.
+    Click on an item element and extract detailed nutrition information from the popup
     
     Args:
-    html_content (str): HTML page source
+    driver: Selenium WebDriver instance
+    item_element: WebElement representing the menu item
+    
+    Returns:
+    dict: Dictionary containing all nutrition facts
+    """
+    nutrition_data = {
+        'calories': 'N/A',
+        'serving_size': 'N/A',
+        'total_fat': 'N/A',
+        'saturated_fat': 'N/A',
+        'trans_fat': 'N/A',
+        'cholesterol': 'N/A',
+        'sodium': 'N/A',
+        'total_carbohydrate': 'N/A',
+        'dietary_fiber': 'N/A',
+        'total_sugars': 'N/A',
+        'added_sugars': 'N/A',
+        'protein': 'N/A',
+        'calcium': 'N/A',
+        'iron': 'N/A',
+        'potassium': 'N/A',
+        'vitamin_d': 'N/A',
+        'ingredients': 'N/A'
+    }
+    
+    try:
+        # Click on the menu item to open the nutrition popup
+        item_element.click()
+        
+        # Wait for nutrition facts to appear
+        WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, "div.nutrition-info"))
+        )
+        
+        # Get the HTML of the nutrition facts popup
+        nutrition_html = driver.page_source
+        soup = BeautifulSoup(nutrition_html, 'html.parser')
+        
+        # Extract serving size
+        serving_size_elem = soup.select_one("div.serving-size div.bold.ng-star-inserted")
+        if serving_size_elem:
+            nutrition_data['serving_size'] = serving_size_elem.get_text(strip=True)
+        
+        # Extract calories
+        calories_elem = soup.select_one("div.calories-row div.ng-star-inserted")
+        if calories_elem:
+            nutrition_data['calories'] = calories_elem.get_text(strip=True)
+        
+        # Extract all nutrition rows
+        nutrition_rows = soup.select("div.nutrition-row")
+        for row in nutrition_rows:
+            # Get the label text
+            label_elem = row.select_one("span.bold, span.emphasis, span.ng-star-inserted")
+            if not label_elem:
+                continue
+                
+            label = label_elem.get_text(strip=True).lower()
+            
+            # Get the value text
+            value_elem = row.select_one("div.nutrition-label span:nth-child(2)")
+            value = value_elem.get_text(strip=True) if value_elem else "N/A"
+            
+            # Map to our nutrition data dictionary
+            if "total fat" in label:
+                nutrition_data['total_fat'] = value
+            elif "saturated fat" in label:
+                nutrition_data['saturated_fat'] = value
+            elif "trans fat" in label:
+                nutrition_data['trans_fat'] = value
+            elif "cholesterol" in label:
+                nutrition_data['cholesterol'] = value
+            elif "sodium" in label:
+                nutrition_data['sodium'] = value
+            elif "total carbohydrate" in label:
+                nutrition_data['total_carbohydrate'] = value
+            elif "dietary fiber" in label:
+                nutrition_data['dietary_fiber'] = value
+            elif "total sugars" in label:
+                nutrition_data['total_sugars'] = value
+            elif "added sugars" in label:
+                nutrition_data['added_sugars'] = value
+            elif "protein" in label:
+                nutrition_data['protein'] = value
+            elif "calcium" in label:
+                nutrition_data['calcium'] = value
+            elif "iron" in label:
+                nutrition_data['iron'] = value
+            elif "potassium" in label:
+                nutrition_data['potassium'] = value
+            elif "vitamin d" in label:
+                nutrition_data['vitamin_d'] = value
+        
+        # Extract ingredients
+        ingredients_elem = soup.select_one("p.ingredients span")
+        if ingredients_elem:
+            nutrition_data['ingredients'] = ingredients_elem.get_text(strip=True)
+        
+        # Close the popup by clicking elsewhere on the page (if needed)
+        try:
+            close_button = driver.find_element(By.CSS_SELECTOR, "button.close-button")
+            close_button.click()
+        except:
+            # If no close button, try clicking elsewhere on the page
+            try:
+                body = driver.find_element(By.TAG_NAME, "body")
+                body.click()
+            except:
+                pass
+        
+        # Wait a moment for the popup to close
+        time.sleep(1)
+        
+        return nutrition_data
+    
+    except Exception as e:
+        print(f"Error extracting nutrition facts: {e}")
+        # Try to close any open popups to recover
+        try:
+            close_buttons = driver.find_elements(By.CSS_SELECTOR, "button.close-button")
+            if close_buttons:
+                close_buttons[0].click()
+        except:
+            pass
+        return nutrition_data
+
+def extract_menu_items(driver, location_name, meal_type):
+    """
+    Extract menu items from the page for a specific meal type, including nutrition facts.
+    
+    Args:
+    driver: Selenium WebDriver instance
     location_name (str): Name of the dining location
     meal_type (str): Type of meal (breakfast/lunch/dinner)
     
     Returns:
     list of dict: List of menu items with details
     """
-    soup = BeautifulSoup(html_content, 'html.parser')
-    
     items = []
     
-    # Find all menu items
-    menu_items = soup.find_all('ns-menu-item-food')
+    try:
+        # Find all menu items on the page
+        menu_items = WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "ns-menu-item-food"))
+        )
+        
+        for item_element in menu_items:
+            try:
+                # Extract food name
+                name_elem = item_element.find_element(By.CSS_SELECTOR, "span.food-name")
+                name = name_elem.text.strip() if name_elem else "Unknown"
+                
+                # Extract dietary icons/traits
+                traits = []
+                trait_elems = item_element.find_elements(By.CSS_SELECTOR, "div.custom-icon")
+                for trait in trait_elems:
+                    # Extract trait name from background image URL
+                    style = trait.get_attribute("style")
+                    trait_match = re.search(r'Food_Trait_Icons_([^-]+)', style)
+                    if trait_match:
+                        traits.append(trait_match.group(1))
+                
+                # Create base item dictionary
+                item_dict = {
+                    'location_name': location_name,
+                    'meal_type': meal_type,
+                    'item_name': name,
+                    'dietary_traits': ', '.join(traits) if traits else ''
+                }
+                
+                # Click on the item to get nutrition facts
+                nutrition_data = extract_nutrition_facts(driver, item_element)
+                
+                # Merge the nutrition data with the base item dictionary
+                item_dict.update(nutrition_data)
+                
+                items.append(item_dict)
+                print(f"Added {name} with nutrition data")
+                
+            except Exception as e:
+                print(f"Error processing a menu item: {e}")
+                continue
+        
+        return items
     
-    for item in menu_items:
-        # Extract food name
-        name_elem = item.find('span', class_='food-name')
-        name = name_elem.get_text(strip=True) if name_elem else "Unknown"
-        
-        # Extract calories
-        calories_elem = item.find('li', class_='food-calories')
-        calories = clean_calories(calories_elem.get_text(strip=True)) if calories_elem else "N/A"
-        
-        # Extract dietary icons/traits
-        traits = []
-        trait_elems = item.find_all('div', class_='custom-icon')
-        for trait in trait_elems:
-            # Extract trait name from background image URL
-            style = trait.get('style', '')
-            trait_match = re.search(r'Food_Trait_Icons_([^-]+)', style)
-            if trait_match:
-                traits.append(trait_match.group(1))
-        
-        # Create item dictionary
-        item_dict = {
-            'location_name': location_name,
-            'item_name': name,
-            'calories': calories,
-            'dietary_traits': ', '.join(traits) if traits else ''
-        }
-        
-        items.append(item_dict)
-    
-    return items
-
-def clean_calories(cal_string):
-    """
-    Clean calories string to extract only the numeric value
-    Returns 'N/A' if no numeric value found
-    """
-    if pd.isna(cal_string):
-        return 'N/A'
-    
-    # Remove 'Cal' or 'cal' and extract numeric value
-    match = re.search(r'(\d+)', str(cal_string))
-    return match.group(1) if match else 'N/A'
+    except Exception as e:
+        print(f"Error extracting menu items: {e}")
+        return items
 
 def get_menu_for_locations(locations, meal_type):
     """
@@ -253,11 +385,8 @@ def get_menu_for_locations(locations, meal_type):
             driver.get(menu_link)
             time.sleep(5)  # Wait for page to load
             
-            # Get the page source
-            page_source = driver.page_source
-            
-            # Extract menu items
-            menu_items = extract_menu_items(page_source, location['name'], meal_type)
+            # Extract menu items including nutrition facts
+            menu_items = extract_menu_items(driver, location['name'], meal_type)
             
             # Add to all menu items
             all_menu_items.extend(menu_items)
@@ -292,19 +421,19 @@ if __name__ == "__main__":
             df.to_csv(locations_csv_path, index=False, quoting=csv.QUOTE_ALL)
             print(f"Dining hall locations saved to {locations_csv_path}")
             
-            # Get and save breakfast items
+            # Get and save breakfast items with full nutrition data
             breakfast_items = get_menu_for_locations(dining_locations, 'breakfast')
             breakfast_df = pd.DataFrame(breakfast_items)
             breakfast_df.to_csv(breakfast_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
             print(f"Breakfast items saved to {breakfast_items_csv_path}")
             
-            # Get and save lunch items
+            # Get and save lunch items with full nutrition data
             lunch_items = get_menu_for_locations(dining_locations, 'lunch')
             lunch_df = pd.DataFrame(lunch_items)
             lunch_df.to_csv(lunch_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
             print(f"Lunch items saved to {lunch_items_csv_path}")
             
-            # Get and save dinner items
+            # Get and save dinner items with full nutrition data
             dinner_items = get_menu_for_locations(dining_locations, 'dinner')
             dinner_df = pd.DataFrame(dinner_items)
             dinner_df.to_csv(dinner_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
