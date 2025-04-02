@@ -179,8 +179,8 @@ def extract_nutrition_facts(driver, item_element):
     dict: Dictionary containing all nutrition facts
     """
     nutrition_data = {
-        'calories': 'N/A',
         'serving_size': 'N/A',
+        'calories': 'N/A',
         'total_fat': 'N/A',
         'saturated_fat': 'N/A',
         'trans_fat': 'N/A',
@@ -189,13 +189,10 @@ def extract_nutrition_facts(driver, item_element):
         'total_carbohydrate': 'N/A',
         'dietary_fiber': 'N/A',
         'total_sugars': 'N/A',
-        'added_sugars': 'N/A',
         'protein': 'N/A',
         'calcium': 'N/A',
         'iron': 'N/A',
         'potassium': 'N/A',
-        'vitamin_d': 'N/A',
-        'ingredients': 'N/A'
     }
     
     try:
@@ -204,92 +201,111 @@ def extract_nutrition_facts(driver, item_element):
         
         # Wait for nutrition facts to appear
         WebDriverWait(driver, 10).until(
-            EC.visibility_of_element_located((By.CSS_SELECTOR, "div.nutrition-info"))
+            EC.visibility_of_element_located((By.CSS_SELECTOR, "div.nutrition-facts-header"))
         )
         
-        # Get the HTML of the nutrition facts popup
+        # Get the complete HTML of the popup
         nutrition_html = driver.page_source
         soup = BeautifulSoup(nutrition_html, 'html.parser')
         
-        # Extract serving size
-        serving_size_elem = soup.select_one("div.serving-size div.bold.ng-star-inserted")
-        if serving_size_elem:
-            nutrition_data['serving_size'] = serving_size_elem.get_text(strip=True)
+        # Extract serving size - this now looks for text nodes that are siblings
+        serving_size_container = soup.select_one("div.serving-size")
+        if serving_size_container:
+            # Get all divs within the container
+            divs = serving_size_container.find_all("div", recursive=False)
+            if len(divs) >= 2:
+                serving_size = divs[1].get_text(strip=True)
+                nutrition_data['serving_size'] = serving_size
         
-        # Extract calories
-        calories_elem = soup.select_one("div.calories-row div.ng-star-inserted")
-        if calories_elem:
-            nutrition_data['calories'] = calories_elem.get_text(strip=True)
+        # Extract calories - targeting the non-bold div within calories-row
+        calories_row = soup.select_one("div.calories-row")
+        if calories_row:
+            calories_div = calories_row.find("div", class_=lambda x: x is None or "bold" not in x)
+            if calories_div:
+                nutrition_data['calories'] = calories_div.get_text(strip=True)
         
-        # Extract all nutrition rows
-        nutrition_rows = soup.select("div.nutrition-row")
-        for row in nutrition_rows:
-            # Get the label text
-            label_elem = row.select_one("span.bold, span.emphasis, span.ng-star-inserted")
-            if not label_elem:
+        # Extract nutrition information from all rows - looking at top and bottom value lists
+        for list_class in ["top-values", "bottom-values"]:
+            nutrition_list = soup.select_one(f"ul.nutrition-facts-values.{list_class}")
+            if not nutrition_list:
                 continue
                 
-            label = label_elem.get_text(strip=True).lower()
-            
-            # Get the value text
-            value_elem = row.select_one("div.nutrition-label span:nth-child(2)")
-            value = value_elem.get_text(strip=True) if value_elem else "N/A"
-            
-            # Map to our nutrition data dictionary
-            if "total fat" in label:
-                nutrition_data['total_fat'] = value
-            elif "saturated fat" in label:
-                nutrition_data['saturated_fat'] = value
-            elif "trans fat" in label:
-                nutrition_data['trans_fat'] = value
-            elif "cholesterol" in label:
-                nutrition_data['cholesterol'] = value
-            elif "sodium" in label:
-                nutrition_data['sodium'] = value
-            elif "total carbohydrate" in label:
-                nutrition_data['total_carbohydrate'] = value
-            elif "dietary fiber" in label:
-                nutrition_data['dietary_fiber'] = value
-            elif "total sugars" in label:
-                nutrition_data['total_sugars'] = value
-            elif "added sugars" in label:
-                nutrition_data['added_sugars'] = value
-            elif "protein" in label:
-                nutrition_data['protein'] = value
-            elif "calcium" in label:
-                nutrition_data['calcium'] = value
-            elif "iron" in label:
-                nutrition_data['iron'] = value
-            elif "potassium" in label:
-                nutrition_data['potassium'] = value
-            elif "vitamin d" in label:
-                nutrition_data['vitamin_d'] = value
+            list_items = nutrition_list.find_all("li")
+            for item in list_items:
+                # Find the nutrition-row div
+                nutrition_row = item.select_one("div.nutrition-row")
+                if not nutrition_row:
+                    continue
+                
+                # Get the nutrition-label div
+                label_div = nutrition_row.select_one("div.nutrition-label")
+                if not label_div:
+                    continue
+                
+                # Get the label span (either has bold, emphasis class or neither)
+                label_span = label_div.find("span", class_=lambda x: x == "bold" or x == "emphasis" or x is None)
+                # Get the value span (should be the second span)
+                spans = label_div.find_all("span")
+                if len(spans) < 2:
+                    continue
+                
+                label = label_span.get_text(strip=True).lower()
+                value = spans[1].get_text(strip=True)
+                
+                # Get daily value percentage if present (could be in different div)
+                dv_div = nutrition_row.select_one("div.daily-percent")
+                dv_value = ""
+                if dv_div and dv_div.find("span"):
+                    dv_value = dv_div.find("span").get_text(strip=True)
+                
+                # Map to the correct field in our dictionary - now in label order
+                if "total fat" in label:
+                    nutrition_data['total_fat'] = value
+                elif "saturated fat" in label:
+                    nutrition_data['saturated_fat'] = value
+                elif "trans fat" in label:
+                    nutrition_data['trans_fat'] = value
+                elif "cholesterol" in label:
+                    nutrition_data['cholesterol'] = value
+                elif "sodium" in label:
+                    nutrition_data['sodium'] = value
+                elif "total carbohydrate" in label:
+                    nutrition_data['total_carbohydrate'] = value
+                elif "dietary fiber" in label:
+                    nutrition_data['dietary_fiber'] = value
+                elif "total sugars" in label:
+                    nutrition_data['total_sugars'] = value
+                elif "protein" in label:
+                    nutrition_data['protein'] = value
+                elif "calcium" in label:
+                    nutrition_data['calcium'] = value
+                elif "iron" in label:
+                    nutrition_data['iron'] = value
+                elif "potassium" in label:
+                    nutrition_data['potassium'] = value
+
         
-        # Extract ingredients
-        ingredients_elem = soup.select_one("p.ingredients span")
-        if ingredients_elem:
-            nutrition_data['ingredients'] = ingredients_elem.get_text(strip=True)
+
         
-        # Close the popup by clicking elsewhere on the page (if needed)
+        # Close the popup
         try:
             close_button = driver.find_element(By.CSS_SELECTOR, "button.close-button")
             close_button.click()
         except:
-            # If no close button, try clicking elsewhere on the page
+            # Try clicking elsewhere on the page
             try:
                 body = driver.find_element(By.TAG_NAME, "body")
                 body.click()
             except:
                 pass
         
-        # Wait a moment for the popup to close
         time.sleep(1)
         
         return nutrition_data
     
     except Exception as e:
         print(f"Error extracting nutrition facts: {e}")
-        # Try to close any open popups to recover
+        # Try to close any popups
         try:
             close_buttons = driver.find_elements(By.CSS_SELECTOR, "button.close-button")
             if close_buttons:
@@ -297,7 +313,6 @@ def extract_nutrition_facts(driver, item_element):
         except:
             pass
         return nutrition_data
-
 def extract_menu_items(driver, location_name, meal_type):
     """
     Extract menu items from the page for a specific meal type, including nutrition facts.
