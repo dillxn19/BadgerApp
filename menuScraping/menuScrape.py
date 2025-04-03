@@ -252,12 +252,6 @@ def extract_nutrition_facts(driver, item_element):
                 label = label_span.get_text(strip=True).lower()
                 value = spans[1].get_text(strip=True)
                 
-                # Get daily value percentage if present (could be in different div)
-                dv_div = nutrition_row.select_one("div.daily-percent")
-                dv_value = ""
-                if dv_div and dv_div.find("span"):
-                    dv_value = dv_div.find("span").get_text(strip=True)
-                
                 # Map to the correct field in our dictionary - now in label order
                 if "total fat" in label:
                     nutrition_data['total_fat'] = value
@@ -283,23 +277,57 @@ def extract_nutrition_facts(driver, item_element):
                     nutrition_data['iron'] = value
                 elif "potassium" in label:
                     nutrition_data['potassium'] = value
-
         
-
-        
-        # Close the popup
+        # Close the popup - try multiple approaches
         try:
-            close_button = driver.find_element(By.CSS_SELECTOR, "button.close-button")
+            # First try the specific modal-carousel close button from your HTML
+            close_button = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "a.modal-carousel.close"))
+            )
             close_button.click()
+            print("Closed nutrition modal with a.modal-carousel.close")
         except:
-            # Try clicking elsewhere on the page
             try:
-                body = driver.find_element(By.TAG_NAME, "body")
-                body.click()
+                # Then try any close button
+                close_button = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.close-button"))
+                )
+                close_button.click()
+                print("Closed nutrition modal with button.close-button")
             except:
-                pass
+                # Try clicking on the backdrop/overlay
+                try:
+                    overlay = WebDriverWait(driver, 3).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "div.modal-backdrop, div.overlay"))
+                    )
+                    overlay.click()
+                    print("Closed nutrition modal by clicking overlay")
+                except:
+                    # Last resort: JavaScript click on close button or press Escape key
+                    try:
+                        driver.execute_script("document.querySelector('a.modal-carousel.close, button.close-button').click();")
+                        print("Closed nutrition modal with JavaScript")
+                    except:
+                        try:
+                            from selenium.webdriver.common.keys import Keys
+                            webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+                            print("Closed nutrition modal with Escape key")
+                        except:
+                            print("Failed to close nutrition modal, continuing anyway")
         
+        # Wait for modal to close
         time.sleep(1)
+        
+        # Check if modal is still open and try one more approach if needed
+        try:
+            modal_still_open = driver.find_element(By.CSS_SELECTOR, "div.nutrition-facts-header").is_displayed()
+            if modal_still_open:
+                # Try clicking outside the modal
+                driver.execute_script("document.body.click();")
+                time.sleep(1)
+        except:
+            # Element not found means modal is closed
+            pass
         
         return nutrition_data
     
@@ -307,12 +335,13 @@ def extract_nutrition_facts(driver, item_element):
         print(f"Error extracting nutrition facts: {e}")
         # Try to close any popups
         try:
-            close_buttons = driver.find_elements(By.CSS_SELECTOR, "button.close-button")
-            if close_buttons:
-                close_buttons[0].click()
+            driver.execute_script("document.querySelector('a.modal-carousel.close, button.close-button').click();")
         except:
             pass
+        # Wait briefly before continuing
+        time.sleep(1)
         return nutrition_data
+
 def extract_menu_items(driver, location_name, meal_type):
     """
     Extract menu items from the page for a specific meal type, including nutrition facts.
@@ -333,7 +362,10 @@ def extract_menu_items(driver, location_name, meal_type):
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "ns-menu-item-food"))
         )
         
-        for item_element in menu_items:
+        print(f"Found {len(menu_items)} menu items for {location_name} {meal_type}")
+        
+        # Loop through each menu item
+        for i, item_element in enumerate(menu_items):
             try:
                 # Extract food name
                 name_elem = item_element.find_element(By.CSS_SELECTOR, "span.food-name")
@@ -357,6 +389,17 @@ def extract_menu_items(driver, location_name, meal_type):
                     'dietary_traits': ', '.join(traits) if traits else ''
                 }
                 
+                print(f"Processing item {i+1}/{len(menu_items)}: {name}")
+                
+                # Get fresh reference to element to avoid stale element errors
+                if i > 0:  # If not the first item, we need to find the element again
+                    # Wait a moment to ensure page has settled after modal closing
+                    time.sleep(1)
+                    # Get fresh menu items
+                    menu_items_fresh = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
+                    if i < len(menu_items_fresh):
+                        item_element = menu_items_fresh[i]
+                
                 # Click on the item to get nutrition facts
                 nutrition_data = extract_nutrition_facts(driver, item_element)
                 
@@ -364,10 +407,26 @@ def extract_menu_items(driver, location_name, meal_type):
                 item_dict.update(nutrition_data)
                 
                 items.append(item_dict)
-                print(f"Added {name} with nutrition data")
+                print(f"Successfully added {name} with nutrition data")
                 
             except Exception as e:
-                print(f"Error processing a menu item: {e}")
+                print(f"Error processing menu item {i+1}: {e}")
+                # Try to recover by refreshing elements if we're not at the end
+                if i < len(menu_items) - 1:
+                    try:
+                        # Ensure any open modal is closed
+                        try:
+                            driver.execute_script("document.querySelector('a.modal-carousel.close, button.close-button').click();")
+                        except:
+                            pass
+                        
+                        time.sleep(2)  # Give page time to recover
+                        
+                        # Re-get the menu items
+                        menu_items = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
+                    except:
+                        print("Failed to recover menu items, continuing to next item")
+                
                 continue
         
         return items
@@ -375,7 +434,6 @@ def extract_menu_items(driver, location_name, meal_type):
     except Exception as e:
         print(f"Error extracting menu items: {e}")
         return items
-
 def get_menu_for_locations(locations, meal_type):
     """
     Get menu items for each location for a specific meal type.
