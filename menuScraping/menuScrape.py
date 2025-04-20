@@ -70,7 +70,7 @@ def get_dining_locations():
             print("'Let's do it' button not found or not needed")
         
         # Wait for content to load after location permissions
-        time.sleep(5)
+        time.sleep(15)
         
         # Find all location containers
         location_elements = WebDriverWait(driver, 10).until(
@@ -167,68 +167,280 @@ def get_dining_locations():
         print(f"Error in get_dining_locations: {e}")
         raise  # Re-raise the exception to be handled in the main block
 
-def extract_menu_items(html_content, location_name, meal_type):
+def extract_nutrition_facts(driver, item_element):
     """
-    Extract menu items from the HTML content for a specific meal type.
+    Click on an item element and extract detailed nutrition information from the popup
     
     Args:
-    html_content (str): HTML page source
+    driver: Selenium WebDriver instance
+    item_element: WebElement representing the menu item
+    
+    Returns:
+    dict: Dictionary containing all nutrition facts
+    """
+    print("Extracting nutrition facts...")
+    nutrition_data = {
+        'serving_size': 'N/A',
+        'calories': 'N/A',
+        'total_fat': 'N/A',
+        'saturated_fat': 'N/A',
+        'trans_fat': 'N/A',
+        'cholesterol': 'N/A',
+        'sodium': 'N/A',
+        'total_carbohydrate': 'N/A',
+        'dietary_fiber': 'N/A',
+        'total_sugars': 'N/A',
+        'protein': 'N/A',
+        'calcium': 'N/A',
+        'iron': 'N/A',
+        'potassium': 'N/A',
+    }
+    
+    try:
+        # Click on the menu item to open the nutrition popup
+        item_element.click()
+        
+        # Wait for nutrition facts to appear. Exception being thrown here
+        # ERORRRRR
+        WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, "div.nutrition-facts-header"))
+        )
+        
+        #use to search for active list element
+        print(item_element.find_element(By.CSS_SELECTOR, "li.active"))
+
+
+        # Get the complete HTML of the popup
+        nutrition_html = driver.page_source
+        soup = BeautifulSoup(nutrition_html, 'html.parser')
+        
+        
+        # Extract serving size - this now looks for text nodes that are siblings
+        serving_size_container = soup.select_one("div.serving-size")
+        if serving_size_container:
+            # Get all divs within the container
+            divs = serving_size_container.find_all("div", recursive=False)
+            if len(divs) >= 2:
+                serving_size = divs[1].get_text(strip=True)
+                nutrition_data['serving_size'] = serving_size
+        
+        # Extract calories - targeting the non-bold div within calories-row
+        calories_row = soup.select_one("div.calories-row")
+        if calories_row:
+            calories_div = calories_row.find("div", class_=lambda x: x is None or "bold" not in x)
+            if calories_div:
+                nutrition_data['calories'] = calories_div.get_text(strip=True)
+        
+        # Extract nutrition information from all rows - looking at top and bottom value lists
+        for list_class in ["top-values", "bottom-values"]:
+            nutrition_list = soup.select_one(f"ul.nutrition-facts-values.{list_class}")
+            if not nutrition_list:
+                continue
+                
+            list_items = nutrition_list.find_all("li")
+            for item in list_items:
+                # Find the nutrition-row div
+                nutrition_row = item.select_one("div.nutrition-row")
+                if not nutrition_row:
+                    continue
+                
+                # Get the nutrition-label div
+                label_div = nutrition_row.select_one("div.nutrition-label")
+                if not label_div:
+                    continue
+                
+                # Get the label span (either has bold, emphasis class or neither)
+                label_span = label_div.find("span", class_=lambda x: x == "bold" or x == "emphasis" or x is None)
+                # Get the value span (should be the second span)
+                spans = label_div.find_all("span")
+                if len(spans) < 2:
+                    continue
+                
+                label = label_span.get_text(strip=True).lower()
+                value = spans[1].get_text(strip=True)
+                
+                # Map to the correct field in our dictionary - now in label order
+                if "total fat" in label:
+                    nutrition_data['total_fat'] = value
+                elif "saturated fat" in label:
+                    nutrition_data['saturated_fat'] = value
+                elif "trans fat" in label:
+                    nutrition_data['trans_fat'] = value
+                elif "cholesterol" in label:
+                    nutrition_data['cholesterol'] = value
+                elif "sodium" in label:
+                    nutrition_data['sodium'] = value
+                elif "total carbohydrate" in label:
+                    nutrition_data['total_carbohydrate'] = value
+                elif "dietary fiber" in label:
+                    nutrition_data['dietary_fiber'] = value
+                elif "total sugars" in label:
+                    nutrition_data['total_sugars'] = value
+                elif "protein" in label:
+                    nutrition_data['protein'] = value
+                elif "calcium" in label:
+                    nutrition_data['calcium'] = value
+                elif "iron" in label:
+                    nutrition_data['iron'] = value
+                elif "potassium" in label:
+                    nutrition_data['potassium'] = value
+        
+        # Close the popup - try multiple approaches
+        try:
+            # First try the specific modal-carousel close button from your HTML
+            close_button = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "a.modal-carousel.close"))
+            )
+            close_button.click()
+            print("Closed nutrition modal with a.modal-carousel.close")
+        except:
+            try:
+                # Then try any close button
+                close_button = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.close-button"))
+                )
+                close_button.click()
+                print("Closed nutrition modal with button.close-button")
+            except:
+                # Try clicking on the backdrop/overlay
+                try:
+                    overlay = WebDriverWait(driver, 3).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "div.modal-backdrop, div.overlay"))
+                    )
+                    overlay.click()
+                    print("Closed nutrition modal by clicking overlay")
+                except:
+                    # Last resort: JavaScript click on close button or press Escape key
+                    try:
+                        driver.execute_script("document.querySelector('a.modal-carousel.close, button.close-button').click();")
+                        print("Closed nutrition modal with JavaScript")
+                    except:
+                        try:
+                            from selenium.webdriver.common.keys import Keys
+                            webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+                            print("Closed nutrition modal with Escape key")
+                        except:
+                            print("Failed to close nutrition modal, continuing anyway")
+        
+        # Wait for modal to close
+        time.sleep(1)
+        
+        # Check if modal is still open and try one more approach if needed
+        try:
+            modal_still_open = driver.find_element(By.CSS_SELECTOR, "div.nutrition-facts-header").is_displayed()
+            if modal_still_open:
+                # Try clicking outside the modal
+                driver.execute_script("document.body.click();")
+                time.sleep(1)
+        except:
+            # Element not found means modal is closed
+            pass
+        
+        return nutrition_data
+    
+    except Exception as e:
+        print(f"Error extracting nutrition facts: {e}")
+        # Try to close any popups
+        try:
+            driver.execute_script("document.querySelector('a.modal-carousel.close, button.close-button').click();")
+        except:
+            pass
+        # Wait briefly before continuing
+        time.sleep(1)
+        return nutrition_data
+
+def extract_menu_items(driver, location_name, meal_type):
+    """
+    Extract menu items from the page for a specific meal type, including nutrition facts.
+    
+    Args:
+    driver: Selenium WebDriver instance
     location_name (str): Name of the dining location
     meal_type (str): Type of meal (breakfast/lunch/dinner)
     
     Returns:
     list of dict: List of menu items with details
     """
-    soup = BeautifulSoup(html_content, 'html.parser')
-    
     items = []
     
-    # Find all menu items
-    menu_items = soup.find_all('ns-menu-item-food')
+    try:
+        # Find all menu items on the page
+        menu_items = WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "ns-menu-item-food"))
+        )
+        
+        print(f"Found {len(menu_items)} menu items for {location_name} {meal_type}")
+        
+        # Loop through each menu item
+        for i, item_element in enumerate(menu_items):
+            try:
+                # Extract food name
+                name_elem = item_element.find_element(By.CSS_SELECTOR, "span.food-name")
+                name = name_elem.text.strip() if name_elem else "Unknown"
+                
+                # Extract dietary icons/traits
+                traits = []
+                trait_elems = item_element.find_elements(By.CSS_SELECTOR, "div.custom-icon")
+                for trait in trait_elems:
+                    # Extract trait name from background image URL
+                    style = trait.get_attribute("style")
+                    trait_match = re.search(r'Food_Trait_Icons_([^-]+)', style)
+                    if trait_match:
+                        traits.append(trait_match.group(1))
+                
+                # Create base item dictionary
+                item_dict = {
+                    'location_name': location_name,
+                    'meal_type': meal_type,
+                    'item_name': name,
+                    'dietary_traits': ', '.join(traits) if traits else ''
+                }
+                
+                print(f"Processing item {i+1}/{len(menu_items)}: {name}")
+                
+                # Get fresh reference to element to avoid stale element errors
+                if i > 0:  # If not the first item, we need to find the element again
+                    # Wait a moment to ensure page has settled after modal closing
+                    time.sleep(1)
+                    # Get fresh menu items
+                    menu_items_fresh = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
+                    if i < len(menu_items_fresh):
+                        item_element = menu_items_fresh[i]
+                
+                # Click on the item to get nutrition facts
+                nutrition_data = extract_nutrition_facts(driver, item_element) #POTENTIAL ERROR
+                
+                # Merge the nutrition data with the base item dictionary
+                item_dict.update(nutrition_data)
+                
+                items.append(item_dict)
+                print(f"Successfully added {name} with nutrition data")
+                
+            except Exception as e:
+                print(f"Error processing menu item {i+1}: {e}")
+                # Try to recover by refreshing elements if we're not at the end
+                if i < len(menu_items) - 1:
+                    try:
+                        # Ensure any open modal is closed
+                        try:
+                            driver.execute_script("document.querySelector('a.modal-carousel.close, button.close-button').click();")
+                        except:
+                            pass
+                        
+                        time.sleep(2)  # Give page time to recover
+                        
+                        # Re-get the menu items
+                        menu_items = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
+                    except:
+                        print("Failed to recover menu items, continuing to next item")
+                
+                continue
+        
+        return items
     
-    for item in menu_items:
-        # Extract food name
-        name_elem = item.find('span', class_='food-name')
-        name = name_elem.get_text(strip=True) if name_elem else "Unknown"
-        
-        # Extract calories
-        calories_elem = item.find('li', class_='food-calories')
-        calories = clean_calories(calories_elem.get_text(strip=True)) if calories_elem else "N/A"
-        
-        # Extract dietary icons/traits
-        traits = []
-        trait_elems = item.find_all('div', class_='custom-icon')
-        for trait in trait_elems:
-            # Extract trait name from background image URL
-            style = trait.get('style', '')
-            trait_match = re.search(r'Food_Trait_Icons_([^-]+)', style)
-            if trait_match:
-                traits.append(trait_match.group(1))
-        
-        # Create item dictionary
-        item_dict = {
-            'location_name': location_name,
-            'item_name': name,
-            'calories': calories,
-            'dietary_traits': ', '.join(traits) if traits else ''
-        }
-        
-        items.append(item_dict)
-    
-    return items
-
-def clean_calories(cal_string):
-    """
-    Clean calories string to extract only the numeric value
-    Returns 'N/A' if no numeric value found
-    """
-    if pd.isna(cal_string):
-        return 'N/A'
-    
-    # Remove 'Cal' or 'cal' and extract numeric value
-    match = re.search(r'(\d+)', str(cal_string))
-    return match.group(1) if match else 'N/A'
-
+    except Exception as e:
+        print(f"Error extracting menu items: {e}")
+        return items
 def get_menu_for_locations(locations, meal_type):
     """
     Get menu items for each location for a specific meal type.
@@ -253,11 +465,8 @@ def get_menu_for_locations(locations, meal_type):
             driver.get(menu_link)
             time.sleep(5)  # Wait for page to load
             
-            # Get the page source
-            page_source = driver.page_source
-            
-            # Extract menu items
-            menu_items = extract_menu_items(page_source, location['name'], meal_type)
+            # Extract menu items including nutrition facts
+            menu_items = extract_menu_items(driver, location['name'], meal_type)
             
             # Add to all menu items
             all_menu_items.extend(menu_items)
@@ -292,19 +501,19 @@ if __name__ == "__main__":
             df.to_csv(locations_csv_path, index=False, quoting=csv.QUOTE_ALL)
             print(f"Dining hall locations saved to {locations_csv_path}")
             
-            # Get and save breakfast items
+            # Get and save breakfast items with full nutrition data
             breakfast_items = get_menu_for_locations(dining_locations, 'breakfast')
             breakfast_df = pd.DataFrame(breakfast_items)
             breakfast_df.to_csv(breakfast_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
             print(f"Breakfast items saved to {breakfast_items_csv_path}")
             
-            # Get and save lunch items
+            # Get and save lunch items with full nutrition data
             lunch_items = get_menu_for_locations(dining_locations, 'lunch')
             lunch_df = pd.DataFrame(lunch_items)
             lunch_df.to_csv(lunch_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
             print(f"Lunch items saved to {lunch_items_csv_path}")
             
-            # Get and save dinner items
+            # Get and save dinner items with full nutrition data
             dinner_items = get_menu_for_locations(dining_locations, 'dinner')
             dinner_df = pd.DataFrame(dinner_items)
             dinner_df.to_csv(dinner_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
