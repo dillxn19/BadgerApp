@@ -1,4 +1,5 @@
 import os
+import re
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -10,7 +11,13 @@ import time
 import csv
 from datetime import datetime
 from bs4 import BeautifulSoup
-import re
+from selenium.webdriver.common.keys import Keys
+
+def clean_for_url(text):
+    """Clean text for use in URLs by removing special characters and formatting."""
+    text = text.replace("'", "")
+    text = re.sub(r'[^a-zA-Z0-9-]', '', text.replace(" ", "-"))
+    return text.lower()
 
 # Set up ChromeDriver with visible browser options
 options = webdriver.ChromeOptions()
@@ -27,13 +34,12 @@ driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), opti
 base_url = "https://wisc-housingdining.nutrislice.com/"
 
 def get_dining_locations():
-    # Navigate to the main page
+    """Get all dining locations with cleaned URLs."""
     driver.get(base_url)
     print("Loaded main page")
     
-    # Click the "View Menus" button
     try:
-        # Try with data-testid first, then fallback to text content
+        # Try multiple selectors for View Menus button
         view_menus_selectors = [
             "button.primary[data-testid='018026bcdb3445168421175d9ae4dd06']",
             "//button[contains(text(), 'View Menus')]",
@@ -44,12 +50,10 @@ def get_dining_locations():
             try:
                 if selector.startswith("//"):
                     button = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, selector))
-                    )
+                        EC.element_to_be_clickable((By.XPATH, selector)))
                 else:
                     button = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                    )
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector)))
                 button.click()
                 print(f"Clicked 'View Menus' using selector: {selector}")
                 break
@@ -62,49 +66,35 @@ def get_dining_locations():
         # Handle "Let's do it" button if it appears
         try:
             lets_do_it = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), \"Let's do it\")]"))
-            )
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), \"Let's do it\")]")))
             lets_do_it.click()
             print("Clicked 'Let's do it' button")
         except:
             print("'Let's do it' button not found or not needed")
         
-        # Wait for content to load after location permissions
-        time.sleep(10)
+        # Wait for content to load
+        time.sleep(8)
         
         # Find all location containers
         location_elements = WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.content-container"))
-        )
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.content-container")))
         
         locations = []
         for elem in location_elements:
             try:
-                # Extract name from the label div
+                # Extract name
                 name_elem = elem.find_element(By.CSS_SELECTOR, "div.label")
                 name = name_elem.text.strip() if name_elem else "Unknown"
                 
-                # Extract address from the address div
+                # Extract address
                 address_elem = elem.find_element(By.CSS_SELECTOR, "div.address")
                 address = address_elem.text.strip() if address_elem else "Address not found"
                 
-                # Find the link - look for an ancestor that's an <a> tag
-                link = ""
-                current = elem
-                for _ in range(5):  # Check up to 5 levels up
-                    try:
-                        parent = current.find_element(By.XPATH, "..")
-                        if parent.tag_name == "a":
-                            link = parent.get_attribute("href")
-                            break
-                        current = parent
-                    except:
-                        break
+                # Generate cleaned URL
+                clean_name = clean_for_url(name)
+                link = f"https://wisc-housingdining.nutrislice.com/menu/{clean_name}"
                 
-                if not link:
-                    link = f"https://wisc-housingdining.nutrislice.com/menu/{name.lower().replace(' ', '-')}"
-                
-                # Extract hours information directly from the main page
+                # Extract hours information
                 hours_data = {
                     'dates_of_operation': '',
                     'breakfast_hours': '',
@@ -113,47 +103,39 @@ def get_dining_locations():
                 }
                 
                 try:
-                    # Find the hours container for this location
                     hours_container = elem.find_element(By.XPATH, "ancestor::div[contains(@class, 'location')]//ul[contains(@class, 'menu-hours')]")
                     
-                    # Extract dates of operation
                     try:
                         dates_elem = hours_container.find_element(By.XPATH, ".//li[contains(.,'Dates of Operation')]")
                         dates = dates_elem.find_element(By.CSS_SELECTOR, "span.time").text.strip()
                         hours_data['dates_of_operation'] = dates
-                    except Exception as e:
-                        print(f"Could not find dates of operation for {name}: {e}")
+                    except:
+                        pass
                     
-                    # Extract meal hours
                     meal_types = ['Breakfast', 'Lunch', 'Dinner']
                     for meal_type in meal_types:
                         try:
                             meal_elem = hours_container.find_element(By.XPATH, f".//li[contains(.,'{meal_type}')]")
                             time_elem = meal_elem.find_element(By.CSS_SELECTOR, "span.time")
                             hours = time_elem.text.strip()
-                            # Remove the chevron icon character if present
                             hours = hours.split(' ', 1)[0] if 'chevron' in hours else hours
                             hours_data[f'{meal_type.lower()}_hours'] = hours
-                        except Exception as e:
-                            print(f"Could not find {meal_type} hours for {name}: {e}")
+                        except:
+                            pass
                 
-                except Exception as e:
-                    print(f"Could not find hours container for {name}: {e}")
+                except:
+                    pass
                 
-                # Create location with all info
                 location_data = {
                     'name': name,
                     'link': link,
                     'address': address,
-                    'dates_of_operation': hours_data['dates_of_operation'],
-                    'breakfast_hours': hours_data['breakfast_hours'],
-                    'lunch_hours': hours_data['lunch_hours'],
-                    'dinner_hours': hours_data['dinner_hours']
+                    **hours_data
                 }
                 
                 if name and name != "Unknown":
                     locations.append(location_data)
-                    print(f"Added {name} with hours: {hours_data}")
+                    print(f"Added {name} with URL: {link}")
                 
             except Exception as e:
                 print(f"Error processing a location element: {e}")
@@ -165,7 +147,7 @@ def get_dining_locations():
     
     except Exception as e:
         print(f"Error in get_dining_locations: {e}")
-        raise  # Re-raise the exception to be handled in the main block
+        raise
 
 def extract_nutrition_facts(driver, item_element):
     """
