@@ -199,17 +199,23 @@ def extract_nutrition_facts(driver, item_element):
         # Click on the menu item to open the nutrition popup
         item_element.click()
         
-        # Wait for nutrition facts to appear
+        # Wait for nutrition facts to appear - now looking specifically for the active modal
         WebDriverWait(driver, 10).until(
-            EC.visibility_of_element_located((By.CSS_SELECTOR, "div.nutrition-facts-header"))
+            EC.visibility_of_element_located((By.CSS_SELECTOR, "li.modal.active div.nutrition-facts-header"))
         )
         
         # Get the complete HTML of the popup
         nutrition_html = driver.page_source
         soup = BeautifulSoup(nutrition_html, 'html.parser')
         
-        # Extract serving size - this now looks for text nodes that are siblings
-        serving_size_container = soup.select_one("div.serving-size")
+        # Find the active modal
+        active_modal = soup.select_one("li.modal.active")
+        if not active_modal:
+            print("No active modal found")
+            return nutrition_data
+        
+        # Extract serving size
+        serving_size_container = active_modal.select_one("div.serving-size")
         if serving_size_container:
             # Get all divs within the container
             divs = serving_size_container.find_all("div", recursive=False)
@@ -217,19 +223,17 @@ def extract_nutrition_facts(driver, item_element):
                 serving_size = divs[1].get_text(strip=True)
                 nutrition_data['serving_size'] = serving_size
         
-        # Extract calories - targeting the non-bold div within calories-row
-        calories_row = soup.select_one("div.calories-row")
+        # Extract calories
+        calories_row = active_modal.select_one("div.calories-row")
         if calories_row:
             calories_div = calories_row.find("div", class_=lambda x: x is None or "bold" not in x)
             if calories_div:
                 nutrition_data['calories'] = calories_div.get_text(strip=True)
         
-        # Extract nutrition information from all rows - looking at top and bottom value lists
-        for list_class in ["top-values", "bottom-values"]:
-            nutrition_list = soup.select_one(f"ul.nutrition-facts-values.{list_class}")
-            if not nutrition_list:
-                continue
-                
+        # Extract nutrition information from all rows
+        nutrition_lists = active_modal.find_all("ul", class_="nutrition-facts-values")
+        
+        for nutrition_list in nutrition_lists:
             list_items = nutrition_list.find_all("li")
             for item in list_items:
                 # Find the nutrition-row div
@@ -242,17 +246,16 @@ def extract_nutrition_facts(driver, item_element):
                 if not label_div:
                     continue
                 
-                # Get the label span (either has bold, emphasis class or neither)
-                label_span = label_div.find("span", class_=lambda x: x == "bold" or x == "emphasis" or x is None)
-                # Get the value span (should be the second span)
+                # Get all spans in the label div
                 spans = label_div.find_all("span")
                 if len(spans) < 2:
                     continue
                 
-                label = label_span.get_text(strip=True).lower()
+                # First span is the label, second is the value
+                label = spans[0].get_text(strip=True).lower()
                 value = spans[1].get_text(strip=True)
                 
-                # Map to the correct field in our dictionary - now in label order
+                # Map to the correct field in our dictionary
                 if "total fat" in label:
                     nutrition_data['total_fat'] = value
                 elif "saturated fat" in label:
@@ -278,81 +281,37 @@ def extract_nutrition_facts(driver, item_element):
                 elif "potassium" in label:
                     nutrition_data['potassium'] = value
         
-        # Close the popup - try multiple approaches
+        # Close the popup
         try:
-            # First try the specific modal-carousel close button from your HTML
-            close_button = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "a.modal-carousel.close"))
-            )
+            # Try to find the close button within the active modal
+            close_button = driver.find_element(By.CSS_SELECTOR, "li.modal.active a.modal-carousel.close")
             close_button.click()
-            print("Closed nutrition modal with a.modal-carousel.close")
+            print("Closed nutrition modal with modal-carousel.close")
         except:
             try:
-                # Then try any close button
-                close_button = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.close-button"))
-                )
-                close_button.click()
-                print("Closed nutrition modal with button.close-button")
+                # Try pressing Escape key if close button not found
+                from selenium.webdriver.common.keys import Keys
+                webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+                print("Closed nutrition modal with Escape key")
             except:
-                # Try clicking on the backdrop/overlay
-                try:
-                    overlay = WebDriverWait(driver, 3).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, "div.modal-backdrop, div.overlay"))
-                    )
-                    overlay.click()
-                    print("Closed nutrition modal by clicking overlay")
-                except:
-                    # Last resort: JavaScript click on close button or press Escape key
-                    try:
-                        driver.execute_script("document.querySelector('a.modal-carousel.close, button.close-button').click();")
-                        print("Closed nutrition modal with JavaScript")
-                    except:
-                        try:
-                            from selenium.webdriver.common.keys import Keys
-                            webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
-                            print("Closed nutrition modal with Escape key")
-                        except:
-                            print("Failed to close nutrition modal, continuing anyway")
+                print("Failed to close nutrition modal, continuing anyway")
         
         # Wait for modal to close
         time.sleep(1)
-        
-        # Check if modal is still open and try one more approach if needed
-        try:
-            modal_still_open = driver.find_element(By.CSS_SELECTOR, "div.nutrition-facts-header").is_displayed()
-            if modal_still_open:
-                # Try clicking outside the modal
-                driver.execute_script("document.body.click();")
-                time.sleep(1)
-        except:
-            # Element not found means modal is closed
-            pass
         
         return nutrition_data
     
     except Exception as e:
         print(f"Error extracting nutrition facts: {e}")
-        # Try to close any popups
+        # Try to close any open modals
         try:
-            driver.execute_script("document.querySelector('a.modal-carousel.close, button.close-button').click();")
+            driver.execute_script("document.querySelector('li.modal.active a.modal-carousel.close').click();")
         except:
             pass
-        # Wait briefly before continuing
-        time.sleep(1)
         return nutrition_data
-
 def extract_menu_items(driver, location_name, meal_type):
     """
     Extract menu items from the page for a specific meal type, including nutrition facts.
-    
-    Args:
-    driver: Selenium WebDriver instance
-    location_name (str): Name of the dining location
-    meal_type (str): Type of meal (breakfast/lunch/dinner)
-    
-    Returns:
-    list of dict: List of menu items with details
     """
     items = []
     
@@ -364,24 +323,31 @@ def extract_menu_items(driver, location_name, meal_type):
         
         print(f"Found {len(menu_items)} menu items for {location_name} {meal_type}")
         
-        # Loop through each menu item
-        for i, item_element in enumerate(menu_items):
+        for i in range(len(menu_items)):
             try:
-                # Extract food name
+                # Get fresh reference to avoid stale elements
+                current_items = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
+                if i >= len(current_items):
+                    continue
+                    
+                item_element = current_items[i]
+                
+                # Scroll item into view
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", item_element)
+                time.sleep(0.5)
+                
+                # Extract basic info
                 name_elem = item_element.find_element(By.CSS_SELECTOR, "span.food-name")
                 name = name_elem.text.strip() if name_elem else "Unknown"
                 
-                # Extract dietary icons/traits
                 traits = []
                 trait_elems = item_element.find_elements(By.CSS_SELECTOR, "div.custom-icon")
                 for trait in trait_elems:
-                    # Extract trait name from background image URL
                     style = trait.get_attribute("style")
                     trait_match = re.search(r'Food_Trait_Icons_([^-]+)', style)
                     if trait_match:
                         traits.append(trait_match.group(1))
                 
-                # Create base item dictionary
                 item_dict = {
                     'location_name': location_name,
                     'meal_type': meal_type,
@@ -391,42 +357,18 @@ def extract_menu_items(driver, location_name, meal_type):
                 
                 print(f"Processing item {i+1}/{len(menu_items)}: {name}")
                 
-                # Get fresh reference to element to avoid stale element errors
-                if i > 0:  # If not the first item, we need to find the element again
-                    # Wait a moment to ensure page has settled after modal closing
-                    time.sleep(1)
-                    # Get fresh menu items
-                    menu_items_fresh = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
-                    if i < len(menu_items_fresh):
-                        item_element = menu_items_fresh[i]
-                
-                # Click on the item to get nutrition facts
+                # Get nutrition facts
                 nutrition_data = extract_nutrition_facts(driver, item_element)
-                
-                # Merge the nutrition data with the base item dictionary
                 item_dict.update(nutrition_data)
                 
                 items.append(item_dict)
                 print(f"Successfully added {name} with nutrition data")
                 
+                # Wait before processing next item
+                time.sleep(1)
+                
             except Exception as e:
                 print(f"Error processing menu item {i+1}: {e}")
-                # Try to recover by refreshing elements if we're not at the end
-                if i < len(menu_items) - 1:
-                    try:
-                        # Ensure any open modal is closed
-                        try:
-                            driver.execute_script("document.querySelector('a.modal-carousel.close, button.close-button').click();")
-                        except:
-                            pass
-                        
-                        time.sleep(2)  # Give page time to recover
-                        
-                        # Re-get the menu items
-                        menu_items = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
-                    except:
-                        print("Failed to recover menu items, continuing to next item")
-                
                 continue
         
         return items
