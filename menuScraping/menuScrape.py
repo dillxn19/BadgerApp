@@ -70,7 +70,7 @@ def get_dining_locations():
             print("'Let's do it' button not found or not needed")
         
         # Wait for content to load after location permissions
-        time.sleep(5)
+        time.sleep(10)
         
         # Find all location containers
         location_elements = WebDriverWait(driver, 10).until(
