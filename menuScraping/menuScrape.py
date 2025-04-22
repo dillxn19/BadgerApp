@@ -388,6 +388,8 @@ def extract_menu_items(driver, location_name, meal_type):
     
     except Exception as e:
         print(f"Error extracting menu items: {e}")
+        print(driver, location_name, meal_type)
+        extract_menu_items(driver, location_name, meal_type)
         return items
 def get_menu_for_locations(locations, meal_type):
     """
