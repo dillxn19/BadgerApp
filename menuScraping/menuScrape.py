@@ -181,163 +181,197 @@ def extract_nutrition_facts(driver, item_element):
         # Click on the menu item to open the nutrition popup
         item_element.click()
         
-        # Wait for nutrition facts to appear - now looking specifically for the active modal
-        WebDriverWait(driver, 10).until(
+        # Wait for nutrition facts to appear - looking specifically for the active modal
+        # Shorter timeout (5 seconds instead of 10)
+        nutrition_header = WebDriverWait(driver, 5).until(
             EC.visibility_of_element_located((By.CSS_SELECTOR, "li.modal.active div.nutrition-facts-header"))
         )
         
-        # Get the complete HTML of the popup
-        nutrition_html = driver.page_source
-        soup = BeautifulSoup(nutrition_html, 'html.parser')
-        
-        # Find the active modal
-        active_modal = soup.select_one("li.modal.active")
-        if not active_modal:
-            print("No active modal found")
-            return nutrition_data
-        
-        # Extract serving size
-        serving_size_container = active_modal.select_one("div.serving-size")
-        if serving_size_container:
-            # Get all divs within the container
-            divs = serving_size_container.find_all("div", recursive=False)
-            if len(divs) >= 2:
-                serving_size = divs[1].get_text(strip=True)
-                nutrition_data['serving_size'] = serving_size
-        
-        # Extract calories
-        calories_row = active_modal.select_one("div.calories-row")
-        if calories_row:
-            calories_div = calories_row.find("div", class_=lambda x: x is None or "bold" not in x)
-            if calories_div:
-                nutrition_data['calories'] = calories_div.get_text(strip=True)
-        
-        # Extract nutrition information from all rows
-        nutrition_lists = active_modal.find_all("ul", class_="nutrition-facts-values")
-        
-        for nutrition_list in nutrition_lists:
-            list_items = nutrition_list.find_all("li")
-            for item in list_items:
-                # Find the nutrition-row div
-                nutrition_row = item.select_one("div.nutrition-row")
-                if not nutrition_row:
-                    continue
+        # Extract all nutrition data at once using JavaScript for better performance
+        nutrition_script = """
+        function extractNutritionData() {
+            const modal = document.querySelector('li.modal.active');
+            if (!modal) return {};
+            
+            const data = {
+                'serving_size': 'N/A',
+                'calories': 'N/A'
+            };
+            
+            // Extract serving size
+            const servingSizeContainer = modal.querySelector('div.serving-size');
+            if (servingSizeContainer) {
+                const divs = servingSizeContainer.querySelectorAll(':scope > div');
+                if (divs.length >= 2) {
+                    data['serving_size'] = divs[1].textContent.trim();
+                }
+            }
+            
+            // Extract calories
+            const caloriesRow = modal.querySelector('div.calories-row');
+            if (caloriesRow) {
+                const caloriesDiv = caloriesRow.querySelector('div:not(.bold)');
+                if (caloriesDiv) {
+                    data['calories'] = caloriesDiv.textContent.trim();
+                }
+            }
+            
+            // Create a mapping of labels to our data keys
+            const labelMapping = {
+                'total fat': 'total_fat',
+                'saturated fat': 'saturated_fat',
+                'trans fat': 'trans_fat',
+                'cholesterol': 'cholesterol',
+                'sodium': 'sodium',
+                'total carbohydrate': 'total_carbohydrate',
+                'dietary fiber': 'dietary_fiber',
+                'total sugars': 'total_sugars',
+                'protein': 'protein',
+                'calcium': 'calcium',
+                'iron': 'iron',
+                'potassium': 'potassium'
+            };
+            
+            // Extract all nutrition values at once
+            const nutritionRows = modal.querySelectorAll('div.nutrition-row');
+            nutritionRows.forEach(row => {
+                const labelDiv = row.querySelector('div.nutrition-label');
+                if (!labelDiv) return;
                 
-                # Get the nutrition-label div
-                label_div = nutrition_row.select_one("div.nutrition-label")
-                if not label_div:
-                    continue
+                const spans = labelDiv.querySelectorAll('span');
+                if (spans.length < 2) return;
                 
-                # Get all spans in the label div
-                spans = label_div.find_all("span")
-                if len(spans) < 2:
-                    continue
+                const label = spans[0].textContent.trim().toLowerCase();
+                const value = spans[1].textContent.trim();
                 
-                # First span is the label, second is the value
-                label = spans[0].get_text(strip=True).lower()
-                value = spans[1].get_text(strip=True)
-                
-                # Map to the correct field in our dictionary
-                if "total fat" in label:
-                    nutrition_data['total_fat'] = value
-                elif "saturated fat" in label:
-                    nutrition_data['saturated_fat'] = value
-                elif "trans fat" in label:
-                    nutrition_data['trans_fat'] = value
-                elif "cholesterol" in label:
-                    nutrition_data['cholesterol'] = value
-                elif "sodium" in label:
-                    nutrition_data['sodium'] = value
-                elif "total carbohydrate" in label:
-                    nutrition_data['total_carbohydrate'] = value
-                elif "dietary fiber" in label:
-                    nutrition_data['dietary_fiber'] = value
-                elif "total sugars" in label:
-                    nutrition_data['total_sugars'] = value
-                elif "protein" in label:
-                    nutrition_data['protein'] = value
-                elif "calcium" in label:
-                    nutrition_data['calcium'] = value
-                elif "iron" in label:
-                    nutrition_data['iron'] = value
-                elif "potassium" in label:
-                    nutrition_data['potassium'] = value
+                // Match the label to our keys
+                for (const [labelText, dataKey] of Object.entries(labelMapping)) {
+                    if (label.includes(labelText)) {
+                        data[dataKey] = value;
+                        break;
+                    }
+                }
+            });
+            
+            return data;
+        }
+        return extractNutritionData();
+        """
         
-        # Close the popup
-        try:
-            # Try to find the close button within the active modal
-            close_button = driver.find_element(By.CSS_SELECTOR, "li.modal.active a.modal-carousel.close")
-            close_button.click()
-            print("Closed nutrition modal with modal-carousel.close")
-        except:
-            try:
-                # Try pressing Escape key if close button not found
-                from selenium.webdriver.common.keys import Keys
-                webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
-                print("Closed nutrition modal with Escape key")
-            except:
-                print("Failed to close nutrition modal, continuing anyway")
+        # Execute JS and get data directly
+        js_result = driver.execute_script(nutrition_script)
         
-        # Wait for modal to close
-        time.sleep(1)
+        # Update our data dictionary with non-null values from JS
+        for key, value in js_result.items():
+            if value and value != 'N/A':
+                nutrition_data[key] = value
+        
+        # Close the popup immediately with JavaScript (faster than finding and clicking elements)
+        driver.execute_script("""
+            const closeButton = document.querySelector('li.modal.active a.modal-carousel.close');
+            if (closeButton) closeButton.click();
+        """)
         
         return nutrition_data
     
     except Exception as e:
         print(f"Error extracting nutrition facts: {e}")
-        # Try to close any open modals
+        # Try to close any open modals with direct JavaScript
         try:
             driver.execute_script("document.querySelector('li.modal.active a.modal-carousel.close').click();")
         except:
-            pass
+            try:
+                # Fallback to Escape key
+                webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+            except:
+                pass
         return nutrition_data
+
 def extract_menu_items(driver, location_name, meal_type):
     """
     Extract menu items from the page for a specific meal type, including nutrition facts.
+    Uses batch processing for better performance.
     """
     items = []
     
     try:
-        # Find all menu items on the page
-        menu_items = WebDriverWait(driver, 10).until(
+        # First, collect all basic menu item data in one pass using JavaScript
+        # This avoids repeated DOM queries and is much faster
+        js_collect_items = """
+        function collectMenuItems() {
+            const items = [];
+            const menuElements = document.querySelectorAll('ns-menu-item-food');
+            
+            menuElements.forEach((item, index) => {
+                // Get basic info
+                const nameElem = item.querySelector('span.food-name');
+                const name = nameElem ? nameElem.textContent.trim() : 'Unknown';
+                
+                // Get traits
+                const traits = [];
+                const traitElems = item.querySelectorAll('div.custom-icon');
+                traitElems.forEach(trait => {
+                    const style = trait.getAttribute('style');
+                    const traitMatch = style.match(/Food_Trait_Icons_([^-]+)/);
+                    if (traitMatch) {
+                        traits.push(traitMatch[1]);
+                    }
+                });
+                
+                items.push({
+                    index: index,
+                    name: name,
+                    traits: traits.join(', ')
+                });
+            });
+            
+            return items;
+        }
+        return collectMenuItems();
+        """
+        
+        # Wait for menu items to appear, use a shorter timeout
+        WebDriverWait(driver, 7).until(
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "ns-menu-item-food"))
         )
         
-        print(f"Found {len(menu_items)} menu items for {location_name} {meal_type}")
+        # Get basic info for all items at once
+        basic_items = driver.execute_script(js_collect_items)
+        print(f"Found {len(basic_items)} menu items for {location_name} {meal_type}")
         
-        for i in range(len(menu_items)):
+        if not basic_items:
+            return items
+            
+        # Create a list to store fully processed items
+        for item_data in basic_items:
             try:
-                # Get fresh reference to avoid stale elements
-                current_items = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
-                if i >= len(current_items):
-                    continue
-                    
-                item_element = current_items[i]
+                # Get item basic data from our JavaScript result
+                name = item_data['name']
+                traits = item_data['traits']
+                index = item_data['index']
                 
-                # Scroll item into view
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", item_element)
-                time.sleep(0.5)
-                
-                # Extract basic info
-                name_elem = item_element.find_element(By.CSS_SELECTOR, "span.food-name")
-                name = name_elem.text.strip() if name_elem else "Unknown"
-                
-                traits = []
-                trait_elems = item_element.find_elements(By.CSS_SELECTOR, "div.custom-icon")
-                for trait in trait_elems:
-                    style = trait.get_attribute("style")
-                    trait_match = re.search(r'Food_Trait_Icons_([^-]+)', style)
-                    if trait_match:
-                        traits.append(trait_match.group(1))
-                
+                # Create basic item dictionary
                 item_dict = {
                     'location_name': location_name,
                     'meal_type': meal_type,
                     'item_name': name,
-                    'dietary_traits': ', '.join(traits) if traits else ''
+                    'dietary_traits': traits
                 }
                 
-                print(f"Processing item {i+1}/{len(menu_items)}: {name}")
+                print(f"Processing item {index+1}/{len(basic_items)}: {name}")
+                
+                # Get a fresh reference to the menu item element
+                menu_items = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
+                if index >= len(menu_items):
+                    print(f"Item index {index} no longer exists, skipping")
+                    continue
+                
+                item_element = menu_items[index]
+                
+                # Scroll item into view with JavaScript (faster than Selenium's scrollIntoView)
+                driver.execute_script("""
+                    arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});
+                """, item_element)
                 
                 # Get nutrition facts
                 nutrition_data = extract_nutrition_facts(driver, item_element)
@@ -346,11 +380,8 @@ def extract_menu_items(driver, location_name, meal_type):
                 items.append(item_dict)
                 print(f"Successfully added {name} with nutrition data")
                 
-                # Wait before processing next item
-                time.sleep(1)
-                
             except Exception as e:
-                print(f"Error processing menu item {i+1}: {e}")
+                print(f"Error processing menu item {index+1}: {e}")
                 continue
         
         return items
