@@ -287,6 +287,17 @@ def extract_nutrition_facts(driver, item_element):
                 pass
         return nutrition_data
 
+def is_duplicate_item(existing_items, new_item):
+    """Check if an item already exists in the list with all the same attributes"""
+    for item in existing_items:
+        if (item['location_name'] == new_item['location_name'] and
+            item['meal_type'] == new_item['meal_type'] and
+            item['item_name'] == new_item['item_name'] and
+            item['serving_size'] == new_item['serving_size'] and
+            item['calories'] == new_item['calories']):
+            return True
+    return False
+
 def extract_menu_items(driver, location_name, meal_type):
     """
     Extract menu items from the page for a specific meal type, including nutrition facts.
@@ -377,8 +388,12 @@ def extract_menu_items(driver, location_name, meal_type):
                 nutrition_data = extract_nutrition_facts(driver, item_element)
                 item_dict.update(nutrition_data)
                 
-                items.append(item_dict)
-                print(f"Successfully added {name} with nutrition data")
+                # Check for duplicates before adding
+                if not is_duplicate_item(items, item_dict):
+                    items.append(item_dict)
+                    print(f"Added {name}")
+                else:
+                    print(f"Skipping duplicate item: {name}")
                 
             except Exception as e:
                 print(f"Error processing menu item {index+1}: {e}")
@@ -388,8 +403,6 @@ def extract_menu_items(driver, location_name, meal_type):
     
     except Exception as e:
         print(f"Error extracting menu items: {e}")
-        print(driver, location_name, meal_type)
-        extract_menu_items(driver, location_name, meal_type)
         return items
 def get_menu_for_locations(locations, meal_type):
     """
