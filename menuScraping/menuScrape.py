@@ -182,8 +182,8 @@ def extract_nutrition_facts(driver, item_element):
         item_element.click()
         
         # Wait for nutrition facts to appear - looking specifically for the active modal
-        # Shorter timeout (5 seconds instead of 10)
-        nutrition_header = WebDriverWait(driver, 5).until(
+        # Shorter timeout (3 seconds instead of 10)
+        nutrition_header = WebDriverWait(driver, 3).until(
             EC.visibility_of_element_located((By.CSS_SELECTOR, "li.modal.active div.nutrition-facts-header"))
         )
         
@@ -275,7 +275,7 @@ def extract_nutrition_facts(driver, item_element):
         return nutrition_data
     
     except Exception as e:
-        print(f"Error extracting nutrition facts: {e}")
+        print(f"Error extracting nutrition facts:")
         # Try to close any open modals with direct JavaScript
         try:
             driver.execute_script("document.querySelector('li.modal.active a.modal-carousel.close').click();")
@@ -331,7 +331,7 @@ def extract_menu_items(driver, location_name, meal_type):
         """
         
         # Wait for menu items to appear, use a shorter timeout
-        WebDriverWait(driver, 7).until(
+        WebDriverWait(driver, 10).until(
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "ns-menu-item-food"))
         )
         
@@ -406,12 +406,18 @@ def get_menu_for_locations(locations, meal_type):
     
     for location in locations:
         try:
+            # Skip if this location doesn't serve this meal type
+            hours_key = f'{meal_type.lower()}_hours'
+            if hours_key in location and not location[hours_key]:
+                print(f"Skipping {location['name']} for {meal_type} - no hours listed")
+                continue
+                
             # Generate menu link for current date and meal type
             menu_link = f"{location['link']}/{meal_type}/{current_date}"
             
             # Navigate to the menu page
             driver.get(menu_link)
-            time.sleep(5)  # Wait for page to load
+            time.sleep(7)  # Wait for page to load
             
             # Extract menu items including nutrition facts
             menu_items = extract_menu_items(driver, location['name'], meal_type)
@@ -425,7 +431,6 @@ def get_menu_for_locations(locations, meal_type):
             print(f"Error getting {meal_type} menu for {location['name']}: {e}")
     
     return all_menu_items
-
 # Main function
 if __name__ == "__main__":
     try:
