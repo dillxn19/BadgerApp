@@ -19,17 +19,17 @@ def clean_for_url(text):
     text = re.sub(r'[^a-zA-Z0-9-]', '', text.replace(" ", "-"))
     return text.lower()
 
-# Set up ChromeDriver with visible browser options
+# Set up ChromeDriver with headless option
 options = webdriver.ChromeOptions()
+options.add_argument('--headless')  # Only change made - added this line
 options.add_argument('--start-maximized')  # Maximize browser window
 options.add_argument('--disable-extensions')
 options.add_experimental_option("prefs", {
     "profile.default_content_setting_values.geolocation": 1  # 1 = allow
 })
 
-# Initialize the driver
+# Initialize the driver (rest of the code remains exactly the same)
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
 # Base URL
 base_url = "https://wisc-housingdining.nutrislice.com/"
 
