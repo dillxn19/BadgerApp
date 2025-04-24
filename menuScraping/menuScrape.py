@@ -1,16 +1,14 @@
 import os
 import re
+import json
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import pandas as pd
 import time
-import csv
 from datetime import datetime
-from bs4 import BeautifulSoup
 from selenium.webdriver.common.keys import Keys
 
 def clean_for_url(text):
@@ -94,13 +92,9 @@ def get_dining_locations():
                 clean_name = clean_for_url(name)
                 link = f"https://wisc-housingdining.nutrislice.com/menu/{clean_name}"
                 
-                # Extract hours information
-                hours_data = {
-                    'dates_of_operation': '',
-                    'breakfast_hours': '',
-                    'lunch_hours': '',
-                    'dinner_hours': ''
-                }
+                # Extract hours information and create hours object
+                hours_data = {}
+                date_of_operation = ""
                 
                 try:
                     hours_container = elem.find_element(By.XPATH, "ancestor::div[contains(@class, 'location')]//ul[contains(@class, 'menu-hours')]")
@@ -108,7 +102,7 @@ def get_dining_locations():
                     try:
                         dates_elem = hours_container.find_element(By.XPATH, ".//li[contains(.,'Dates of Operation')]")
                         dates = dates_elem.find_element(By.CSS_SELECTOR, "span.time").text.strip()
-                        hours_data['dates_of_operation'] = dates
+                        date_of_operation = dates
                     except:
                         pass
                     
@@ -119,18 +113,22 @@ def get_dining_locations():
                             time_elem = meal_elem.find_element(By.CSS_SELECTOR, "span.time")
                             hours = time_elem.text.strip()
                             hours = hours.split(' ', 1)[0] if 'chevron' in hours else hours
-                            hours_data[f'{meal_type.lower()}_hours'] = hours
+                            hours_data[meal_type.lower()] = hours
                         except:
-                            pass
+                            hours_data[meal_type.lower()] = ""
                 
                 except:
                     pass
                 
                 location_data = {
-                    'name': name,
+                    'location_name': name,
+                    'date_of_operation': date_of_operation,
+                    'location': address,
                     'link': link,
-                    'address': address,
-                    **hours_data
+                    'hours': hours_data,
+                    'breakfast': [],
+                    'lunch': [],
+                    'dinner': []
                 }
                 
                 if name and name != "Unknown":
@@ -290,15 +288,13 @@ def extract_nutrition_facts(driver, item_element):
 def is_duplicate_item(existing_items, new_item):
     """Check if an item already exists in the list with all the same attributes"""
     for item in existing_items:
-        if (item['location_name'] == new_item['location_name'] and
-            item['meal_type'] == new_item['meal_type'] and
-            item['item_name'] == new_item['item_name'] and
+        if (item['item_name'] == new_item['item_name'] and
             item['serving_size'] == new_item['serving_size'] and
             item['calories'] == new_item['calories']):
             return True
     return False
 
-def extract_menu_items(driver, location_name, meal_type):
+def extract_menu_items(driver, meal_type):
     """
     Extract menu items from the page for a specific meal type, including nutrition facts.
     Uses batch processing for better performance.
@@ -348,7 +344,7 @@ def extract_menu_items(driver, location_name, meal_type):
         
         # Get basic info for all items at once
         basic_items = driver.execute_script(js_collect_items)
-        print(f"Found {len(basic_items)} menu items for {location_name} {meal_type}")
+        print(f"Found {len(basic_items)} menu items for {meal_type}")
         
         if not basic_items:
             return items
@@ -363,8 +359,6 @@ def extract_menu_items(driver, location_name, meal_type):
                 
                 # Create basic item dictionary
                 item_dict = {
-                    'location_name': location_name,
-                    'meal_type': meal_type,
                     'item_name': name,
                     'dietary_traits': traits
                 }
@@ -404,27 +398,27 @@ def extract_menu_items(driver, location_name, meal_type):
     except Exception as e:
         print(f"Error extracting menu items: {e}")
         return items
-def get_menu_for_locations(locations, meal_type):
+
+def get_menu_for_location(location):
     """
-    Get menu items for each location for a specific meal type.
+    Get menu items for a specific location for all meal types.
     
     Args:
-    locations (list): List of dining locations
-    meal_type (str): Type of meal (breakfast/lunch/dinner)
+    location (dict): Dictionary containing location information
     
     Returns:
-    list: List of all menu items across locations
+    dict: Updated location dictionary with menu items
     """
     current_date = datetime.now().strftime('%Y-%m-%d')
+    updated_location = location.copy()
     
-    all_menu_items = []
+    meal_types = ['breakfast', 'lunch', 'dinner']
     
-    for location in locations:
+    for meal_type in meal_types:
         try:
             # Skip if this location doesn't serve this meal type
-            hours_key = f'{meal_type.lower()}_hours'
-            if hours_key in location and not location[hours_key]:
-                print(f"Skipping {location['name']} for {meal_type} - no hours listed")
+            if meal_type not in location.get('hours', {}) or not location['hours'].get(meal_type):
+                print(f"Skipping {location['location_name']} for {meal_type} - no hours listed")
                 continue
                 
             # Generate menu link for current date and meal type
@@ -435,57 +429,63 @@ def get_menu_for_locations(locations, meal_type):
             time.sleep(7)  # Wait for page to load
             
             # Extract menu items including nutrition facts
-            menu_items = extract_menu_items(driver, location['name'], meal_type)
+            menu_items = extract_menu_items(driver, meal_type)
             
-            # Add to all menu items
-            all_menu_items.extend(menu_items)
+            # Add menu items to the location dictionary
+            updated_location[meal_type] = menu_items
             
-            print(f"Added {len(menu_items)} {meal_type} items for {location['name']}")
+            print(f"Added {len(menu_items)} {meal_type} items for {location['location_name']}")
         
         except Exception as e:
-            print(f"Error getting {meal_type} menu for {location['name']}: {e}")
+            print(f"Error getting {meal_type} menu for {location['location_name']}: {e}")
     
-    return all_menu_items
+    return updated_location
+
+def save_to_json(data, filename):
+    """
+    Save data to a JSON file.
+    
+    Args:
+    data: Data to save
+    filename: Name of the JSON file
+    """
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        print(f"Saved data to {filename}")
+    except Exception as e:
+        print(f"Error saving to JSON file: {e}")
+
 # Main function
 if __name__ == "__main__":
     try:
         # Get the directory of the current script
         script_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # Set the CSV file paths
-        locations_csv_path = os.path.join(script_dir, "dining_hall_locations.csv")
-        breakfast_items_csv_path = os.path.join(script_dir, "dining_hall_breakfast_items.csv")
-        lunch_items_csv_path = os.path.join(script_dir, "dining_hall_lunch_items.csv")
-        dinner_items_csv_path = os.path.join(script_dir, "dining_hall_dinner_items.csv")
+        # Set the JSON file path
+        dining_data_json_path = os.path.join(script_dir, "dining_hall_data.json")
         
-        # First, get and save dining locations
+        # Get dining locations
         dining_locations = get_dining_locations()
         
         if dining_locations:
-            print(f"\nFound {len(dining_locations)} dining locations:")
+            print(f"\nFound {len(dining_locations)} dining locations")
             
-            # Save dining hall locations
-            df = pd.DataFrame(dining_locations)
-            df.to_csv(locations_csv_path, index=False, quoting=csv.QUOTE_ALL)
-            print(f"Dining hall locations saved to {locations_csv_path}")
+            # List to store all locations with their menu data
+            all_location_data = []
             
-            # Get and save breakfast items with full nutrition data
-            breakfast_items = get_menu_for_locations(dining_locations, 'breakfast')
-            breakfast_df = pd.DataFrame(breakfast_items)
-            breakfast_df.to_csv(breakfast_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
-            print(f"Breakfast items saved to {breakfast_items_csv_path}")
+            # Process each location
+            for location in dining_locations:
+                # Get menu items for all meal types
+                location_with_menu = get_menu_for_location(location)
+                
+                # Add to our list
+                all_location_data.append(location_with_menu)
+                
+            # Save all data to a JSON file
+            save_to_json(all_location_data, dining_data_json_path)
             
-            # Get and save lunch items with full nutrition data
-            lunch_items = get_menu_for_locations(dining_locations, 'lunch')
-            lunch_df = pd.DataFrame(lunch_items)
-            lunch_df.to_csv(lunch_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
-            print(f"Lunch items saved to {lunch_items_csv_path}")
-            
-            # Get and save dinner items with full nutrition data
-            dinner_items = get_menu_for_locations(dining_locations, 'dinner')
-            dinner_df = pd.DataFrame(dinner_items)
-            dinner_df.to_csv(dinner_items_csv_path, index=False, quoting=csv.QUOTE_ALL)
-            print(f"Dinner items saved to {dinner_items_csv_path}")
+            print("All dining hall menus have been saved to JSON")
         else:
             print("No dining locations found!")
     
