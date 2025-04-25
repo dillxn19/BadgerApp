@@ -420,13 +420,19 @@ def get_menu_for_location(location):
             if meal_type not in location.get('hours', {}) or not location['hours'].get(meal_type):
                 print(f"Skipping {location['location_name']} for {meal_type} - no hours listed")
                 continue
+            hours_value = location['hours'].get(meal_type, "")
+            if not hours_value or hours_value.lower() == "closed":
+                print(f"Skipping {location['location_name']} for {meal_type} - listed as closed")
+                # Keep empty array for this meal type
+                updated_location[meal_type] = []
+                continue
                 
             # Generate menu link for current date and meal type
             menu_link = f"{location['link']}/{meal_type}/{current_date}"
             
             # Navigate to the menu page
             driver.get(menu_link)
-            time.sleep(7)  # Wait for page to load
+            time.sleep(9)  # Wait for page to load
             
             # Extract menu items including nutrition facts
             menu_items = extract_menu_items(driver, meal_type)
