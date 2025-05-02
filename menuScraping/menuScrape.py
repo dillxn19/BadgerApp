@@ -181,7 +181,7 @@ def extract_nutrition_facts(driver, item_element):
         
         # Wait for nutrition facts to appear - looking specifically for the active modal
         # Shorter timeout (3 seconds instead of 10)
-        nutrition_header = WebDriverWait(driver, 3).until(
+        nutrition_header = WebDriverWait(driver, 4).until(
             EC.visibility_of_element_located((By.CSS_SELECTOR, "li.modal.active div.nutrition-facts-header"))
         )
         
@@ -294,110 +294,187 @@ def is_duplicate_item(existing_items, new_item):
             return True
     return False
 
-def extract_menu_items(driver, meal_type):
+def extract_menu_items(driver, meal_type, max_retries=3):
     """
     Extract menu items from the page for a specific meal type, including nutrition facts.
-    Uses batch processing for better performance.
+    Uses batch processing for better performance. Retries if menu fails to load.
+    
+    Args:
+    driver: Selenium WebDriver instance
+    meal_type: Type of meal (breakfast, lunch, dinner)
+    max_retries: Maximum number of retry attempts
+    
+    Returns:
+    list: List of menu items with nutrition data
     """
     items = []
+    retry_count = 0
     
-    try:
-        # First, collect all basic menu item data in one pass using JavaScript
-        # This avoids repeated DOM queries and is much faster
-        js_collect_items = """
-        function collectMenuItems() {
-            const items = [];
-            const menuElements = document.querySelectorAll('ns-menu-item-food');
-            
-            menuElements.forEach((item, index) => {
-                // Get basic info
-                const nameElem = item.querySelector('span.food-name');
-                const name = nameElem ? nameElem.textContent.trim() : 'Unknown';
+    while retry_count <= max_retries:
+        try:
+            # First, collect all basic menu item data in one pass using JavaScript
+            # This avoids repeated DOM queries and is much faster
+            js_collect_items = """
+            function collectMenuItems() {
+                const items = [];
+                const menuElements = document.querySelectorAll('ns-menu-item-food');
                 
-                // Get traits
-                const traits = [];
-                const traitElems = item.querySelectorAll('div.custom-icon');
-                traitElems.forEach(trait => {
-                    const style = trait.getAttribute('style');
-                    const traitMatch = style.match(/Food_Trait_Icons_([^-]+)/);
-                    if (traitMatch) {
-                        traits.push(traitMatch[1]);
+                menuElements.forEach((item, index) => {
+                    // Get basic info
+                    const nameElem = item.querySelector('span.food-name');
+                    const name = nameElem ? nameElem.textContent.trim() : 'Unknown';
+                    
+                    // Get traits
+                    const traits = [];
+                    const traitElems = item.querySelectorAll('div.custom-icon');
+                    traitElems.forEach(trait => {
+                        const style = trait.getAttribute('style');
+                        const traitMatch = style.match(/Food_Trait_Icons_([^-]+)/);
+                        if (traitMatch) {
+                            traits.push(traitMatch[1]);
+                        }
+                    });
+                    
+                    items.push({
+                        index: index,
+                        name: name,
+                        traits: traits.join(', ')
+                    });
+                });
+                
+                return items;
+            }
+            return collectMenuItems();
+            """
+            
+            # Wait for menu items to appear, use a shorter timeout
+            WebDriverWait(driver, 12).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "ns-menu-item-food"))
+            )
+            
+            # Get basic info for all items at once
+            basic_items = driver.execute_script(js_collect_items)
+            print(f"Found {len(basic_items)} menu items for {meal_type}")
+            
+            if not basic_items:
+                # If we didn't find any items but didn't get an exception,
+                # it could be an empty menu, not a loading error
+                print(f"Menu appears to be empty for {meal_type}")
+                return items
+                
+            # Create a list to store fully processed items
+            for item_data in basic_items:
+                try:
+                    # Get item basic data from our JavaScript result
+                    name = item_data['name']
+                    traits = item_data['traits']
+                    index = item_data['index']
+                    
+                    # Create basic item dictionary
+                    item_dict = {
+                        'item_name': name,
+                        'dietary_traits': traits
                     }
-                });
-                
-                items.push({
-                    index: index,
-                    name: name,
-                    traits: traits.join(', ')
-                });
-            });
-            
-            return items;
-        }
-        return collectMenuItems();
-        """
-        
-        # Wait for menu items to appear, use a shorter timeout
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "ns-menu-item-food"))
-        )
-        
-        # Get basic info for all items at once
-        basic_items = driver.execute_script(js_collect_items)
-        print(f"Found {len(basic_items)} menu items for {meal_type}")
-        
-        if not basic_items:
-            return items
-            
-        # Create a list to store fully processed items
-        for item_data in basic_items:
-            try:
-                # Get item basic data from our JavaScript result
-                name = item_data['name']
-                traits = item_data['traits']
-                index = item_data['index']
-                
-                # Create basic item dictionary
-                item_dict = {
-                    'item_name': name,
-                    'dietary_traits': traits
-                }
-                
-                print(f"Processing item {index+1}/{len(basic_items)}: {name}")
-                
-                # Get a fresh reference to the menu item element
-                menu_items = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
-                if index >= len(menu_items):
-                    print(f"Item index {index} no longer exists, skipping")
+                    
+                    print(f"Processing item {index+1}/{len(basic_items)}: {name}")
+                    
+                    # Get a fresh reference to the menu item element
+                    menu_items = driver.find_elements(By.CSS_SELECTOR, "ns-menu-item-food")
+                    if index >= len(menu_items):
+                        print(f"Item index {index} no longer exists, skipping")
+                        continue
+                    
+                    item_element = menu_items[index]
+                    
+                    # Scroll item into view with JavaScript (faster than Selenium's scrollIntoView)
+                    driver.execute_script("""
+                        arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});
+                    """, item_element)
+                    
+                    # Get nutrition facts
+                    nutrition_data = extract_nutrition_facts(driver, item_element)
+                    item_dict.update(nutrition_data)
+                    
+                    # Check for duplicates before adding
+                    if not is_duplicate_item(items, item_dict):
+                        items.append(item_dict)
+                        print(f"Added {name}")
+                    else:
+                        print(f"Skipping duplicate item: {name}")
+                    
+                except Exception as e:
+                    print(f"Error processing menu item {index+1}: {e}")
                     continue
-                
-                item_element = menu_items[index]
-                
-                # Scroll item into view with JavaScript (faster than Selenium's scrollIntoView)
-                driver.execute_script("""
-                    arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});
-                """, item_element)
-                
-                # Get nutrition facts
-                nutrition_data = extract_nutrition_facts(driver, item_element)
-                item_dict.update(nutrition_data)
-                
-                # Check for duplicates before adding
-                if not is_duplicate_item(items, item_dict):
-                    items.append(item_dict)
-                    print(f"Added {name}")
-                else:
-                    print(f"Skipping duplicate item: {name}")
-                
-            except Exception as e:
-                print(f"Error processing menu item {index+1}: {e}")
-                continue
+            
+            # If we reach here with no exceptions, we're done
+            return items
         
-        return items
+        except Exception as e:
+            retry_count += 1
+            if retry_count <= max_retries:
+                print(f"Error extracting menu items: {e}")
+                print(f"Retrying... (Attempt {retry_count} of {max_retries})")
+                
+                # Refresh the page and wait a bit longer each retry
+                driver.refresh()
+                time.sleep(7 + (retry_count * 3))  # Progressively wait longer
+            else:
+                print(f"Failed to extract menu items after {max_retries} attempts: {e}")
+                return items  # Return empty list after all retries fail
     
-    except Exception as e:
-        print(f"Error extracting menu items: {e}")
-        return items
+    return items
+
+def load_menu_page_with_retries(driver, menu_link, max_retries=3):
+    """
+    Loads a menu page with retry logic
+    
+    Args:
+    driver: Selenium WebDriver instance
+    menu_link: URL to load
+    max_retries: Maximum number of retry attempts
+    
+    Returns:
+    bool: True if page loaded successfully, False otherwise
+    """
+    retry_count = 0
+    
+    while retry_count <= max_retries:
+        try:
+            driver.get(menu_link)
+            
+            # Wait for the page to load with progressively longer wait times
+            wait_time = 7 + (retry_count * 2)
+            print(f"Waiting {wait_time} seconds for page to load...")
+            time.sleep(wait_time)
+            
+            # Check if menu items are present using JavaScript
+            has_items = driver.execute_script("""
+                return document.querySelectorAll('ns-menu-item-food').length > 0;
+            """)
+            
+            if has_items:
+                print("Menu page loaded successfully")
+                return True
+            else:
+                print("Menu page loaded but no items found")
+                retry_count += 1
+                if retry_count <= max_retries:
+                    print(f"Retrying... (Attempt {retry_count} of {max_retries})")
+                    driver.refresh()
+                else:
+                    print(f"Failed to load menu items after {max_retries} attempts")
+                    return False
+        
+        except Exception as e:
+            retry_count += 1
+            if retry_count <= max_retries:
+                print(f"Error loading menu page: {e}")
+                print(f"Retrying... (Attempt {retry_count} of {max_retries})")
+            else:
+                print(f"Failed to load menu page after {max_retries} attempts: {e}")
+                return False
+    
+    return False
 
 def get_menu_for_location(location):
     """
@@ -417,9 +494,11 @@ def get_menu_for_location(location):
     for meal_type in meal_types:
         try:
             # Skip if this location doesn't serve this meal type
-            if meal_type not in location.get('hours', {}) or not location['hours'].get(meal_type):
+            if meal_type not in location.get('hours', {}):
                 print(f"Skipping {location['location_name']} for {meal_type} - no hours listed")
                 continue
+                
+            # Skip if this location is closed for this meal type
             hours_value = location['hours'].get(meal_type, "")
             if not hours_value or hours_value.lower() == "closed":
                 print(f"Skipping {location['location_name']} for {meal_type} - listed as closed")
@@ -429,21 +508,25 @@ def get_menu_for_location(location):
                 
             # Generate menu link for current date and meal type
             menu_link = f"{location['link']}/{meal_type}/{current_date}"
+            print(f"Loading menu for {location['location_name']} - {meal_type}")
             
-            # Navigate to the menu page
-            driver.get(menu_link)
-            time.sleep(9)  # Wait for page to load
-            
-            # Extract menu items including nutrition facts
-            menu_items = extract_menu_items(driver, meal_type)
-            
-            # Add menu items to the location dictionary
-            updated_location[meal_type] = menu_items
-            
-            print(f"Added {len(menu_items)} {meal_type} items for {location['location_name']}")
+            # Load the menu page with retries
+            if load_menu_page_with_retries(driver, menu_link, max_retries=3):
+                # Extract menu items with retries
+                menu_items = extract_menu_items(driver, meal_type, max_retries=3)
+                
+                # Add menu items to the location dictionary
+                updated_location[meal_type] = menu_items
+                
+                print(f"Added {len(menu_items)} {meal_type} items for {location['location_name']}")
+            else:
+                print(f"Could not load menu for {location['location_name']} - {meal_type}")
+                updated_location[meal_type] = []  # Empty array for failed scrapes
         
         except Exception as e:
             print(f"Error getting {meal_type} menu for {location['location_name']}: {e}")
+            # Keep empty array for this meal type on error
+            updated_location[meal_type] = []
     
     return updated_location
 
