@@ -10,6 +10,8 @@ from selenium.webdriver.support import expected_conditions as EC
 import time
 from datetime import datetime
 from selenium.webdriver.common.keys import Keys
+from pymongo import MongoClient
+
 
 def clean_for_url(text):
     """Clean text for use in URLs by removing special characters and formatting."""
@@ -530,30 +532,56 @@ def get_menu_for_location(location):
     
     return updated_location
 
-def save_to_json(data, filename):
+def save_to_mongodb(data, db_name="BadgerApp", collection_name="dining_hall"):
     """
-    Save data to a JSON file.
+    Save data to MongoDB.
     
     Args:
     data: Data to save
-    filename: Name of the JSON file
+    db_name: Name of the database
+    collection_name: Name of the collection
+    
+    Returns:
+    bool: True if successful, False otherwise
     """
     try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        print(f"Saved data to {filename}")
+        # MongoDB connection string
+        # Default is localhost:27017, change this if your MongoDB server is elsewhere
+        mongo_uri = "mongodb://localhost:27017/"
+        
+        # Create a MongoDB client
+        client = MongoClient(mongo_uri)
+        
+        # Get database and collection
+        db = client[db_name]
+        collection = db[collection_name]
+        
+        # Add timestamp to data
+        scrape_timestamp = datetime.now()
+        for item in data:
+            item['scrape_date'] = scrape_timestamp
+            
+        # Clear existing data from today to avoid duplicates
+        # We're using the scrape_date field to only delete today's records
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        collection.delete_many({"scrape_date": {"$gte": today_start}})
+        
+        # Insert the new data
+        if data:  # Only attempt insert if we have data
+            collection.insert_many(data)
+            print(f"Saved {len(data)} dining locations to MongoDB: {db_name}.{collection_name}")
+        else:
+            print("No data to save to MongoDB")
+        
+        return True
+        
     except Exception as e:
-        print(f"Error saving to JSON file: {e}")
+        print(f"Error saving to MongoDB: {e}")
+        return False
 
 # Main function
 if __name__ == "__main__":
     try:
-        # Get the directory of the current script
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        # Set the JSON file path
-        dining_data_json_path = os.path.join(script_dir, "dining_hall_data.json")
-        
         # Get dining locations
         dining_locations = get_dining_locations()
         
@@ -570,11 +598,12 @@ if __name__ == "__main__":
                 
                 # Add to our list
                 all_location_data.append(location_with_menu)
-                
-            # Save all data to a JSON file
-            save_to_json(all_location_data, dining_data_json_path)
             
-            print("All dining hall menus have been saved to JSON")
+            # Save all data to MongoDB
+            if save_to_mongodb(all_location_data):
+                print("All dining hall menus have been saved to MongoDB")
+            else:
+                print("Failed to save data to MongoDB")
         else:
             print("No dining locations found!")
     
