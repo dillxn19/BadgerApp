@@ -1,3 +1,6 @@
 config.py
 scraper/__pycache__/
 __pycache__/
+.env
+.DS_Store
+.gitignore
