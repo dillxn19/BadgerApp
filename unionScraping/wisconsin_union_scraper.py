@@ -18,13 +18,15 @@ def scrape_restaurants_to_csv():
     # Find all <a> tags whose "href" matches the pattern
     a_tags = soup.find_all("a", href=pattern)
 
-    # Define a set of terms to exclude
-    blocked_terms = {
-        "Restaurant Name",
-        "List View",
-        "Map View",
-        "Go to top of page"
-    }
+    # List of terms to exclude
+    exclude_terms = [
+        "Menu View", 
+        "Map View", 
+        "View Menu", 
+        "View Map", 
+        "Location",
+        "Directions"
+    ]
 
     with open("restaurants.csv", mode="w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -34,12 +36,12 @@ def scrape_restaurants_to_csv():
             # Extract the visible text
             restaurant_name = a_tag.get_text(strip=True)
             
-            # Skip any unwanted terms
-            if restaurant_name and restaurant_name not in blocked_terms:
+            # Skip if the name is in the exclude list or is empty
+            if (restaurant_name and 
+                not any(term.lower() in restaurant_name.lower() for term in exclude_terms)):
                 writer.writerow([restaurant_name])
 
     print("Scraping complete. The CSV file 'restaurants.csv' has been created.")
 
 if __name__ == "__main__":
     scrape_restaurants_to_csv()
-
