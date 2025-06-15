@@ -6,6 +6,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from clubs_mongodb import MongoDBHandler
+
 import pandas as pd
 import time
 import re
@@ -274,10 +276,25 @@ def main():
                 except:
                     pass
         
-        # Save data to CSV
-        df = pd.DataFrame(data)
-        df.to_csv('organization_data.csv', index=False, quoting=csv.QUOTE_ALL)
-        print(f"Data saved to organization_data.csv. Total organizations processed: {len(data)}")
+        
+        # NEW: Save data to MongoDB
+        print("\n" + "="*50)
+        print("Saving data to MongoDB...")
+        print("="*50)
+        
+        # Option 1: Using the class-based approach
+        mongo_handler = MongoDBHandler()
+        if mongo_handler.save_organizations_data(data):
+            print("✅ Successfully saved organizations data to MongoDB!")
+        else:
+            print("❌ Failed to save organizations data to MongoDB")
+        mongo_handler.close()
+        
+        # Option 2: Alternative using direct function approach (uncomment if preferred)
+        # if save_organizations_data_direct(data):
+        #     print("✅ Successfully saved organizations data to MongoDB!")
+        # else:
+        #     print("❌ Failed to save organizations data to MongoDB")
         
     except Exception as e:
         print(f"Main execution error: {e}")
